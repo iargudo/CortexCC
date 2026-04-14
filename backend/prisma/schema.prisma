@@ -1,0 +1,533 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  password_hash  String
+  first_name     String
+  last_name      String
+  avatar_url     String?
+  sip_extension  String?
+  sip_password   String?
+  status         AgentStatus @default(OFFLINE)
+  max_concurrent Int      @default(5)
+  status_since   DateTime @default(now())
+  skills         UserSkill[]
+  roles          UserRole[]
+  teams          TeamMember[]
+  assignments    ConversationAssignment[]
+  messages_sent  Message[] @relation("SentBy")
+  contact_notes  ContactNote[]
+  quality_evals  QualityEvaluation[] @relation("Evaluator")
+  refresh_tokens RefreshToken[]
+  quick_replies_owned QuickReply[] @relation("QuickReplyOwner")
+  voice_calls     VoiceCall[]
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  user_id    String
+  token_hash String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("refresh_tokens")
+}
+
+enum AgentStatus {
+  ONLINE
+  AWAY
+  BUSY
+  OFFLINE
+  ON_BREAK
+}
+
+model Skill {
+  id         String      @id @default(uuid())
+  name       String      @unique
+  category   String
+  users      UserSkill[]
+  queues     QueueSkill[]
+  created_at DateTime    @default(now())
+
+  @@map("skills")
+}
+
+model UserSkill {
+  id           String @id @default(uuid())
+  user_id      String
+  skill_id     String
+  proficiency  Int    @default(5)
+  user         User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  skill        Skill  @relation(fields: [skill_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, skill_id])
+  @@map("user_skills")
+}
+
+model Role {
+  id          String     @id @default(uuid())
+  name        String     @unique
+  permissions Json
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  id      String @id @default(uuid())
+  user_id String
+  role_id String
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  role    Role   @relation(fields: [role_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, role_id])
+  @@map("user_roles")
+}
+
+model Team {
+  id          String       @id @default(uuid())
+  name        String       @unique
+  description String?
+  members     TeamMember[]
+  queues      Queue[]
+  created_at  DateTime     @default(now())
+
+  @@map("teams")
+}
+
+model TeamMember {
+  id      String @id @default(uuid())
+  team_id String
+  user_id String
+  role    String @default("member")
+  team    Team   @relation(fields: [team_id], references: [id], onDelete: Cascade)
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([team_id, user_id])
+  @@map("team_members")
+}
+
+model Channel {
+  id                    String         @id @default(uuid())
+  name                  String
+  type                  ChannelType
+  status                String         @default("active")
+  config                Json           @default("{}")
+  conversations_today_cache Int       @default(0)
+  conversations         Conversation[]
+  queues                QueueChannel[]
+  created_at            DateTime       @default(now())
+  updated_at            DateTime       @updatedAt
+
+  @@map("channels")
+}
+
+enum ChannelType {
+  WHATSAPP
+  EMAIL
+  TEAMS
+  VOICE
+  WEBCHAT
+}
+
+model Contact {
+  id            String         @id @default(uuid())
+  external_id   String?
+  source_system String?
+  name          String?
+  email         String?
+  phone         String?
+  phone_wa      String?
+  teams_id      String?
+  metadata      Json?
+  conversations Conversation[]
+  tags          ContactTag[]
+  notes         ContactNote[]
+  created_at    DateTime       @default(now())
+  updated_at    DateTime       @updatedAt
+
+  @@index([phone])
+  @@index([email])
+  @@index([external_id, source_system])
+  @@map("contacts")
+}
+
+model Tag {
+  id       String       @id @default(uuid())
+  name     String       @unique
+  color    String       @default("#6B7280")
+  contacts ContactTag[]
+
+  @@map("tags")
+}
+
+model ContactTag {
+  id         String  @id @default(uuid())
+  contact_id String
+  tag_id     String
+  contact    Contact @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+  tag        Tag     @relation(fields: [tag_id], references: [id], onDelete: Cascade)
+
+  @@unique([contact_id, tag_id])
+  @@map("contact_tags")
+}
+
+model ContactNote {
+  id         String   @id @default(uuid())
+  contact_id String
+  author_id  String?
+  content    String
+  created_at DateTime @default(now())
+  contact    Contact  @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+  author     User?    @relation(fields: [author_id], references: [id])
+
+  @@index([contact_id])
+  @@map("contact_notes")
+}
+
+model Conversation {
+  id                    String              @id @default(uuid())
+  channel_id            String
+  contact_id            String
+  queue_id              String?
+  status                ConversationStatus  @default(WAITING)
+  priority              Int                 @default(5)
+  subject               String?
+  source                String              @default("direct")
+  source_ref_id         String?
+  escalation_reason     String?
+  escalation_context    Json?
+  sla_policy_id         String?
+  sla_first_response_at DateTime?
+  sla_resolution_at     DateTime?
+  sla_breached          Boolean             @default(false)
+  wait_time_seconds     Int?
+  handle_time_seconds   Int?
+  first_response_seconds Int?
+  csat_score            Int?
+  csat_comment          String?
+  disposition_id        String?
+  wrap_up_notes         String?
+  unread_agent_count    Int                 @default(0)
+  last_message_preview  String?
+  last_message_at       DateTime?
+  channel               Channel             @relation(fields: [channel_id], references: [id])
+  contact               Contact             @relation(fields: [contact_id], references: [id])
+  queue                 Queue?              @relation(fields: [queue_id], references: [id])
+  disposition           Disposition?        @relation(fields: [disposition_id], references: [id])
+  sla_policy            SlaPolicy?          @relation(fields: [sla_policy_id], references: [id])
+  assignments           ConversationAssignment[]
+  messages              Message[]
+  transfers             Transfer[]
+  quality_evaluations   QualityEvaluation[]
+  created_at            DateTime            @default(now())
+  updated_at            DateTime            @updatedAt
+  resolved_at           DateTime?
+
+  @@index([status, queue_id])
+  @@index([contact_id])
+  @@index([source, source_ref_id])
+  @@map("conversations")
+}
+
+enum ConversationStatus {
+  WAITING
+  ASSIGNED
+  ACTIVE
+  ON_HOLD
+  WRAP_UP
+  RESOLVED
+  ABANDONED
+  TRANSFERRED
+}
+
+model ConversationAssignment {
+  id              String    @id @default(uuid())
+  conversation_id String
+  user_id         String
+  assigned_at     DateTime  @default(now())
+  accepted_at     DateTime?
+  ended_at        DateTime?
+  reason          String?
+  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  user            User         @relation(fields: [user_id], references: [id])
+
+  @@map("conversation_assignments")
+}
+
+model Message {
+  id                   String      @id @default(uuid())
+  conversation_id      String
+  sender_type          SenderType
+  sender_id            String?
+  content_type         ContentType @default(TEXT)
+  content              String
+  metadata             Json?
+  email_message_id     String?
+  email_in_reply_to    String?
+  email_subject        String?
+  email_cc             String?
+  email_bcc            String?
+  call_recording_url   String?
+  call_duration_seconds Int?
+  transcription        String?
+  delivery_status      String      @default("sent")
+  error_message        String?
+  is_internal          Boolean     @default(false)
+  conversation         Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  sender               User?        @relation("SentBy", fields: [sender_id], references: [id])
+  attachments          Attachment[]
+  created_at           DateTime    @default(now())
+
+  @@index([conversation_id, created_at])
+  @@map("messages")
+}
+
+enum SenderType {
+  CONTACT
+  AGENT
+  SYSTEM
+  BOT
+}
+
+enum ContentType {
+  TEXT
+  IMAGE
+  FILE
+  AUDIO
+  VIDEO
+  EMAIL
+  VOICE_CALL
+  SYSTEM_EVENT
+  CSAT_REQUEST
+}
+
+model Attachment {
+  id          String  @id @default(uuid())
+  message_id  String
+  filename    String
+  mime_type   String
+  size_bytes  Int
+  storage_url String
+  message     Message @relation(fields: [message_id], references: [id], onDelete: Cascade)
+
+  @@map("attachments")
+}
+
+model Queue {
+  id                 String          @id @default(uuid())
+  name               String          @unique
+  description        String?
+  team_id            String?
+  priority           Int             @default(5)
+  routing_strategy   RoutingStrategy @default(ROUND_ROBIN)
+  max_wait_seconds   Int             @default(300)
+  overflow_queue_id  String?
+  overflow_message   String?
+  schedule             Json?
+  out_of_hours_message String?
+  sla_policy_id      String?
+  is_active            Boolean         @default(true)
+  team                 Team?           @relation(fields: [team_id], references: [id])
+  overflow_queue       Queue?          @relation("Overflow", fields: [overflow_queue_id], references: [id])
+  overflow_targets     Queue[]         @relation("Overflow")
+  channels             QueueChannel[]
+  skills_required      QueueSkill[]
+  conversations        Conversation[]
+  sla_policy           SlaPolicy?      @relation(fields: [sla_policy_id], references: [id])
+  created_at           DateTime        @default(now())
+  updated_at           DateTime        @updatedAt
+
+  @@map("queues")
+}
+
+enum RoutingStrategy {
+  ROUND_ROBIN
+  LEAST_BUSY
+  SKILL_BASED
+  PRIORITY_BASED
+  LONGEST_IDLE
+}
+
+model QueueChannel {
+  id         String  @id @default(uuid())
+  queue_id   String
+  channel_id String
+  queue      Queue   @relation(fields: [queue_id], references: [id], onDelete: Cascade)
+  channel    Channel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+
+  @@unique([queue_id, channel_id])
+  @@map("queue_channels")
+}
+
+model QueueSkill {
+  id         String  @id @default(uuid())
+  queue_id   String
+  skill_id   String
+  min_level  Int     @default(1)
+  mandatory  Boolean @default(false)
+  queue      Queue   @relation(fields: [queue_id], references: [id], onDelete: Cascade)
+  skill      Skill   @relation(fields: [skill_id], references: [id], onDelete: Cascade)
+
+  @@unique([queue_id, skill_id])
+  @@map("queue_skills")
+}
+
+model Transfer {
+  id              String       @id @default(uuid())
+  conversation_id String
+  from_user_id    String?
+  from_queue_id   String?
+  to_user_id      String?
+  to_queue_id     String?
+  reason          String?
+  transfer_type   String
+  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  created_at      DateTime     @default(now())
+
+  @@map("transfers")
+}
+
+model SlaPolicy {
+  id                     String   @id @default(uuid())
+  name                   String   @unique
+  first_response_seconds Int
+  resolution_seconds     Int
+  warning_threshold_pct  Int      @default(80)
+  queues                 Queue[]
+  conversations          Conversation[]
+  created_at             DateTime @default(now())
+
+  @@map("sla_policies")
+}
+
+model Disposition {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  category      String
+  requires_note Boolean        @default(false)
+  is_active     Boolean        @default(true)
+  conversations Conversation[]
+
+  @@map("dispositions")
+}
+
+model QuickReply {
+  id         String       @id @default(uuid())
+  shortcode  String       @unique
+  title      String
+  content    String
+  channel    ChannelType?
+  category   String?
+  owner_id   String?
+  created_at DateTime     @default(now())
+  owner      User?        @relation("QuickReplyOwner", fields: [owner_id], references: [id])
+
+  @@map("quick_replies")
+}
+
+model BusinessHours {
+  id        String @id @default(uuid())
+  name      String @unique
+  timezone  String @default("America/Guayaquil")
+  schedule  Json
+  holidays  Json?
+
+  @@map("business_hours")
+}
+
+model EmailTemplate {
+  id         String   @id @default(uuid())
+  name       String
+  subject    String
+  body       String
+  category   String   @default("general")
+  variables  String[] @default([])
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("email_templates")
+}
+
+model QualityEvaluation {
+  id               String   @id @default(uuid())
+  conversation_id  String
+  evaluator_id     String?
+  agent_display_name String
+  contact_display_name String
+  channel          ChannelType
+  score            Float
+  saludo           Int
+  empatia          Int
+  resolucion       Int
+  cierre           Int
+  comment          String   @default("")
+  created_at       DateTime @default(now())
+  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  evaluator        User?    @relation("Evaluator", fields: [evaluator_id], references: [id])
+
+  @@map("quality_evaluations")
+}
+
+model OrganizationSettings {
+  id            String @id @default("default")
+  company_name  String @default("Cortex Contact")
+  timezone      String @default("America/Guayaquil")
+  language      String @default("es")
+  sip_server    String?
+  sip_realm     String?
+  sip_display_name String?
+  sip_stun_servers String[] @default(["stun:stun.l.google.com:19302"])
+  sip_ice_gathering_timeout Int @default(5000)
+  updated_at    DateTime @updatedAt
+
+  @@map("organization_settings")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actor_id  String?
+  action    String
+  entity    String
+  entity_id String?
+  metadata  Json?
+  created_at DateTime @default(now())
+
+  @@index([created_at])
+  @@map("audit_logs")
+}
+
+model VoiceCall {
+  id                String   @id @default(uuid())
+  user_id           String?
+  external_call_id  String
+  remote_uri        String
+  remote_display_name String?
+  direction         String
+  state             String
+  started_at        DateTime?
+  ended_at          DateTime?
+  duration_seconds  Int?
+  metadata          Json?
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+  user              User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id, created_at])
+  @@index([external_call_id])
+  @@map("voice_calls")
+}
