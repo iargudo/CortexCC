@@ -74,12 +74,26 @@ export default function InboxPage() {
 
   /** No pisar selección por URL ni forzar otra conv. si el detalle aún carga o falló. */
   useEffect(() => {
-    if (!listQuery.isSuccess || !conversations.length) return;
+    if (!listQuery.isSuccess) return;
+    if (!conversations.length) {
+      if (selectedId || conversationFromUrl) {
+        setSelectedId(null);
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.delete("conversation");
+            return next;
+          },
+          { replace: true }
+        );
+      }
+      return;
+    }
     if (conversationFromUrl && selectedId === conversationFromUrl) return;
     if (!selectedId || !conversations.some((c) => c.id === selectedId)) {
       setSelectedId(conversations[0].id);
     }
-  }, [listQuery.isSuccess, conversations, selectedId, conversationFromUrl]);
+  }, [listQuery.isSuccess, conversations, selectedId, conversationFromUrl, setSearchParams]);
 
   useEffect(() => {
     const s = getSocket();
