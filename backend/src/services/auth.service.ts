@@ -2,12 +2,27 @@ import type { AgentStatus, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
 import { hashRefreshToken, signAccessToken, signRefreshToken, verifyAccessToken } from "../lib/jwt.js";
+import type { PermissionsMap } from "../lib/permissions.js";
 import { HttpError } from "../middleware/errorHandler.js";
 
 function primaryRole(roles: { name: string }[]): "admin" | "supervisor" | "agent" {
   if (roles.some((r) => r.name === "admin")) return "admin";
   if (roles.some((r) => r.name === "supervisor")) return "supervisor";
   return "agent";
+}
+
+function mergeRolePermissions(roles: { role: { permissions: unknown } }[]): PermissionsMap {
+  const merged: PermissionsMap = {};
+  for (const userRole of roles) {
+    const permissions = userRole.role.permissions;
+    if (!permissions || typeof permissions !== "object") continue;
+    for (const [key, value] of Object.entries(permissions as Record<string, unknown>)) {
+      if (value === true) {
+        merged[key as keyof PermissionsMap] = true;
+      }
+    }
+  }
+  return merged;
 }
 
 export function toAuthUserResponse(user: {
@@ -18,7 +33,7 @@ export function toAuthUserResponse(user: {
   avatar_url: string | null;
   status: string;
   max_concurrent: number;
-  roles: { role: { name: string } }[];
+  roles: { role: { name: string; permissions: unknown } }[];
 }) {
   return {
     id: user.id,
@@ -28,6 +43,7 @@ export function toAuthUserResponse(user: {
     role: primaryRole(user.roles.map((r) => ({ name: r.role.name }))),
     status: user.status,
     max_concurrent: user.max_concurrent,
+    permissions: mergeRolePermissions(user.roles),
   };
 }
 

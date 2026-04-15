@@ -153,6 +153,71 @@ export interface QuickReply {
   category?: string;
 }
 
+export type IntegrationAppMode = "SNAPSHOT" | "EMBED" | "ACTIONS";
+export type IntegrationAuthType = "NONE" | "API_KEY" | "OAUTH2" | "JWT";
+export type IntegrationBindingScopeType = "GLOBAL" | "CHANNEL" | "QUEUE" | "ROLE";
+
+export interface IntegrationApp {
+  id: string;
+  key: string;
+  name: string;
+  icon: string;
+  mode: IntegrationAppMode;
+  auth_type: IntegrationAuthType;
+  base_url?: string | null;
+  credentials_ref?: string | null;
+  config: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IntegrationBinding {
+  id: string;
+  app_id: string;
+  app_key: string;
+  app_name: string;
+  scope_type: IntegrationBindingScopeType;
+  scope_id?: string | null;
+  placement: string;
+  sort_order: number;
+  is_visible: boolean;
+  rules?: Record<string, unknown>;
+}
+
+export interface ConversationIntegrationRuntimeApp {
+  id: string;
+  key: string;
+  name: string;
+  icon: string;
+  mode: IntegrationAppMode;
+  view_mode: "INLINE" | "MODAL" | "EXTERNAL_TAB";
+  match_explain: string;
+  sort_order: number;
+  embed_url?: string;
+  snapshot?: { label: string; value: string }[];
+  actions?: { id: string; label: string; action_key: string }[];
+}
+
+export interface ConversationIntegrationsWorkspace {
+  conversation_id: string;
+  source: string;
+  source_ref_id?: string | null;
+  escalation_reason?: string | null;
+  escalation_context?: Record<string, unknown> | null;
+  channel: { type: ChannelType; name: string };
+  queue: { id: string; name: string } | null;
+  contact: {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    phone_wa?: string | null;
+    source_system?: string | null;
+  };
+  apps: ConversationIntegrationRuntimeApp[];
+}
+
 export interface BusinessHours {
   id: string;
   name: string;

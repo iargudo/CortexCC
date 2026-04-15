@@ -147,6 +147,111 @@ async function main() {
     });
   }
 
+  const integrationApps = [
+    {
+      id: "seed-intapp-crm",
+      key: "crm_snapshot",
+      name: "CRM",
+      icon: "UserCircle2",
+      mode: "SNAPSHOT" as const,
+      config: {
+        view_mode: "INLINE",
+        cards: [
+          { label: "Nivel cliente", value: "{{contact.tags.0|default:Standard}}" },
+          { label: "Origen", value: "{{contact.source_system|default:direct}}" },
+        ],
+      },
+    },
+    {
+      id: "seed-intapp-collect",
+      key: "collect_console",
+      name: "Cobranza",
+      icon: "Wallet",
+      mode: "EMBED" as const,
+      base_url: "https://cortexcollect.example.com",
+      config: {
+        view_mode: "MODAL",
+        embed_path_template:
+          "/workspace?conversation={{conversation.id}}&contact={{contact.id}}&source={{conversation.source}}",
+      },
+    },
+    {
+      id: "seed-intapp-maps",
+      key: "geo_map",
+      name: "Mapa",
+      icon: "MapPinned",
+      mode: "EMBED" as const,
+      base_url: "https://maps.google.com",
+      config: { embed_path_template: "/maps?q={{contact.phone|default:Ecuador}}" },
+    },
+  ];
+
+  for (const app of integrationApps) {
+    await prisma.integrationApp.upsert({
+      where: { key: app.key },
+      create: {
+        id: app.id,
+        key: app.key,
+        name: app.name,
+        icon: app.icon,
+        mode: app.mode,
+        base_url: app.base_url,
+        config: app.config,
+        is_active: true,
+      },
+      update: {
+        name: app.name,
+        icon: app.icon,
+        mode: app.mode,
+        base_url: app.base_url,
+        config: app.config,
+        is_active: true,
+      },
+    });
+  }
+
+  await prisma.integrationAppBinding.upsert({
+    where: { id: "seed-bind-crm-global" },
+    create: {
+      id: "seed-bind-crm-global",
+      app_id: "seed-intapp-crm",
+      scope_type: "GLOBAL",
+      placement: "right_rail",
+      sort_order: 10,
+      is_visible: true,
+    },
+    update: { is_visible: true, sort_order: 10 },
+  });
+
+  await prisma.integrationAppBinding.upsert({
+    where: { id: "seed-bind-collect-whatsapp" },
+    create: {
+      id: "seed-bind-collect-whatsapp",
+      app_id: "seed-intapp-collect",
+      scope_type: "CHANNEL",
+      scope_id: "WHATSAPP",
+      placement: "right_rail",
+      sort_order: 20,
+      is_visible: true,
+      rules: { sources: ["agenthub_escalation", "collect_escalation"] },
+    },
+    update: { is_visible: true, sort_order: 20 },
+  });
+
+  await prisma.integrationAppBinding.upsert({
+    where: { id: "seed-bind-maps-voice" },
+    create: {
+      id: "seed-bind-maps-voice",
+      app_id: "seed-intapp-maps",
+      scope_type: "CHANNEL",
+      scope_id: "VOICE",
+      placement: "right_rail",
+      sort_order: 30,
+      is_visible: true,
+    },
+    update: { is_visible: true, sort_order: 30 },
+  });
+
   console.log("Seed completed.");
 }
 

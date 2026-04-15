@@ -9,12 +9,22 @@ import {
 } from "@/lib/api";
 import { disconnectSocket, reconnectSocket } from "@/lib/socket";
 
+export type PermissionKey =
+  | "inbox"
+  | "dashboard"
+  | "supervisor"
+  | "quality"
+  | "reports"
+  | "contacts"
+  | "settings";
+
 export interface AuthUser {
   id: string;
   name: string;
   email: string;
   avatar?: string;
   role: string;
+  permissions?: Partial<Record<PermissionKey, boolean>>;
   status: AgentStatus;
   max_concurrent: number;
 }

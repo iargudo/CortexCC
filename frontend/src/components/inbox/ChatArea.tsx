@@ -4,9 +4,6 @@ import { toast } from "sonner";
 import { type Conversation, type EscalationHistoryItem, type Message } from "@/data/mock";
 import type { QuickReply } from "@/data/mock";
 import { apiFetch, apiJson } from "@/lib/api";
-import { ChannelBadge } from "@/components/ChannelIcon";
-import { ConversationStatusBadge } from "@/components/StatusBadge";
-import { PriorityIndicator } from "@/components/PriorityIndicator";
 import { TransferDialog } from "@/components/inbox/TransferDialog";
 import { ResolveDialog } from "@/components/inbox/ResolveDialog";
 import { EmailThreadView } from "@/components/inbox/EmailThreadView";
@@ -307,9 +304,6 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-medium text-sm truncate">{conversation.contact.name}</span>
-            <ChannelBadge channel={conversation.channel} />
-            <PriorityIndicator priority={conversation.priority} />
-            <ConversationStatusBadge status={conversation.status} />
           </div>
           <p className="text-xs text-muted-foreground truncate">
             {conversation.queue_name} {conversation.assigned_agent && `• ${conversation.assigned_agent}`}
@@ -320,41 +314,49 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
           {conversation.status === "ON_HOLD" ? (
             <Button
               variant="ghost"
-              size="sm"
-              className="h-7 text-xs gap-1"
+              size="icon"
+              className="h-8 w-8"
               disabled={resumeMut.isPending}
               onClick={() => resumeMut.mutate()}
+              title="Retomar"
+              aria-label="Retomar"
             >
-              <Play size={12} /> Retomar
+              <Play size={14} />
             </Button>
           ) : (
             <Button
               variant="ghost"
-              size="sm"
-              className="h-7 text-xs gap-1"
+              size="icon"
+              className="h-8 w-8"
               disabled={holdMut.isPending || conversation.status === "WAITING" || conversation.status === "RESOLVED"}
               onClick={() => holdMut.mutate()}
+              title="Espera"
+              aria-label="Espera"
             >
-              <Pause size={12} /> Espera
+              <Pause size={14} />
             </Button>
           )}
           <Button
             variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1"
+            size="icon"
+            className="h-8 w-8"
             disabled={cannotTransferAsAgent}
             onClick={() => setTransferOpen(true)}
+            title="Transferir"
+            aria-label="Transferir"
           >
-            <ArrowRightLeft size={12} /> Transferir
+            <ArrowRightLeft size={14} />
           </Button>
           <Button
             variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1 text-status-online"
+            size="icon"
+            className="h-8 w-8 text-status-online"
             disabled={cannotResolveAsAgent}
             onClick={() => setResolveOpen(true)}
+            title="Resolver"
+            aria-label="Resolver"
           >
-            <CheckCircle size={12} /> Resolver
+            <CheckCircle size={14} />
           </Button>
         </div>
       </div>

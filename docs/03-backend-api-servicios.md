@@ -61,9 +61,17 @@ Variables claves validadas en `backend/src/config/env.ts`:
 ### Integraciones y webhooks
 
 - `GET /integrations/status`
-- `POST /integrations/agenthub/escalate`
-- `POST /integrations/collect/escalate`
-- `POST /integrations/voice/transfer`
+- `POST /integrations/escalate`
+- `GET /conversations/:id/integrations`
+- `GET /settings/integration-apps`
+- `POST /settings/integration-apps`
+- `POST /settings/integration-apps/bootstrap-real-examples`
+- `PUT /settings/integration-apps/:id`
+- `DELETE /settings/integration-apps/:id`
+- `GET /settings/integration-bindings`
+- `POST /settings/integration-bindings`
+- `PUT /settings/integration-bindings/:id`
+- `DELETE /settings/integration-bindings/:id`
 - `POST /webhooks/whatsapp/:channelId`
 
 ### Conversaciones y mensajes

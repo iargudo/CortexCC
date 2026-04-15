@@ -48,7 +48,7 @@ export function ConversationList({
   };
 
   return (
-    <div className="w-80 h-full min-h-0 border-r flex flex-col bg-card shrink-0 overflow-hidden">
+    <div className="w-64 h-full min-h-0 border-r flex flex-col bg-card shrink-0 overflow-hidden">
       {/* Tabs */}
       <div className="flex border-b">
         {tabs.map((t) => (
@@ -107,8 +107,14 @@ export function ConversationList({
               )}
             >
               <div className="flex items-start gap-2">
-                <div className="mt-0.5">
+                <div className="mt-0.5 w-7 flex flex-col items-center gap-1.5 shrink-0">
                   <ChannelIcon channel={conv.channel} size={14} />
+                  <PriorityIndicator priority={conv.priority} />
+                  {conv.unread_count > 0 && (
+                    <span className="bg-primary text-primary-foreground text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+                      {conv.unread_count}
+                    </span>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-1">
@@ -118,14 +124,8 @@ export function ConversationList({
                   {conv.subject && <p className="text-xs text-muted-foreground truncate">{conv.subject}</p>}
                   <p className="text-xs text-muted-foreground truncate mt-0.5">{conv.last_message}</p>
                   <div className="flex items-center gap-1.5 mt-1.5">
-                    <PriorityIndicator priority={conv.priority} />
                     <ConversationStatusBadge status={conv.status} />
                     <span className="text-[10px] text-muted-foreground">●{conv.queue_name}</span>
-                    {conv.unread_count > 0 && (
-                      <span className="ml-auto bg-primary text-primary-foreground text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
-                        {conv.unread_count}
-                      </span>
-                    )}
                   </div>
                   {conv.sla_percent !== undefined && (
                     <div className="mt-1.5">

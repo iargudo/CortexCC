@@ -144,6 +144,62 @@ enum ChannelType {
   WEBCHAT
 }
 
+enum IntegrationAppMode {
+  SNAPSHOT
+  EMBED
+  ACTIONS
+}
+
+enum IntegrationAuthType {
+  NONE
+  API_KEY
+  OAUTH2
+  JWT
+}
+
+enum IntegrationBindingScopeType {
+  GLOBAL
+  CHANNEL
+  QUEUE
+  ROLE
+}
+
+model IntegrationApp {
+  id              String               @id @default(uuid())
+  key             String               @unique
+  name            String
+  icon            String               @default("Link")
+  mode            IntegrationAppMode   @default(SNAPSHOT)
+  auth_type       IntegrationAuthType  @default(NONE)
+  base_url        String?
+  credentials_ref String?
+  config          Json                 @default("{}")
+  is_active       Boolean              @default(true)
+  bindings        IntegrationAppBinding[]
+  created_at      DateTime             @default(now())
+  updated_at      DateTime             @updatedAt
+
+  @@map("integration_apps")
+}
+
+model IntegrationAppBinding {
+  id         String                      @id @default(uuid())
+  app_id     String
+  scope_type IntegrationBindingScopeType @default(GLOBAL)
+  scope_id   String?
+  placement  String                      @default("right_rail")
+  sort_order Int                         @default(0)
+  is_visible Boolean                     @default(true)
+  rules      Json                        @default("{}")
+  app        IntegrationApp              @relation(fields: [app_id], references: [id], onDelete: Cascade)
+  created_at DateTime                    @default(now())
+  updated_at DateTime                    @updatedAt
+
+  @@index([placement, is_visible])
+  @@index([scope_type, scope_id])
+  @@map("integration_app_bindings")
+}
+
 model Contact {
   id            String         @id @default(uuid())
   external_id   String?

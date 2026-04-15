@@ -155,28 +155,30 @@ export function buildApiRouter(app: Express): Router {
   );
 
   r.post(
-    "/integrations/agenthub/escalate",
+    "/integrations/escalate",
     integrationApiKeyMiddleware,
     asyncHandler(async (req, res) => {
-      const out = await integrationService.handleAgentHubEscalation(req.body);
-      res.status(201).json(out);
-    })
-  );
-
-  r.post(
-    "/integrations/collect/escalate",
-    integrationApiKeyMiddleware,
-    asyncHandler(async (req, res) => {
-      const out = await integrationService.handleCollectEscalation(req.body);
-      res.status(201).json(out);
-    })
-  );
-
-  r.post(
-    "/integrations/voice/transfer",
-    integrationApiKeyMiddleware,
-    asyncHandler(async (req, res) => {
-      const out = await integrationService.handleVoiceTransfer(req.body);
+      const body = req.body as {
+        source_system?: string;
+        channel_type?: string;
+        contact?: { phone?: string; name?: string; external_id?: string };
+      };
+      if (!body.source_system?.trim()) throw new HttpError(400, "source_system required");
+      if (!body.channel_type?.trim()) throw new HttpError(400, "channel_type required");
+      if (!body.contact || (body.contact.phone == null && body.contact.external_id == null)) {
+        throw new HttpError(400, "contact with phone or external_id required");
+      }
+      const out = await integrationService.handleGenericEscalation({
+        source_system: body.source_system,
+        channel_type: body.channel_type,
+        contact: body.contact,
+        event_type: (req.body as { event_type?: string }).event_type,
+        conversation_ref_id: (req.body as { conversation_ref_id?: string }).conversation_ref_id,
+        escalation_reason: (req.body as { escalation_reason?: string }).escalation_reason,
+        context: (req.body as { context?: unknown }).context,
+        preferred_queue: (req.body as { preferred_queue?: string }).preferred_queue,
+        priority: (req.body as { priority?: number }).priority,
+      });
       res.status(201).json(out);
     })
   );
@@ -618,6 +620,16 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     asyncHandler(async (req, res) => {
       res.json(await conversationService.getEscalationContext(routeParam(req, "id"), conversationViewer(req)));
+    })
+  );
+
+  r.get(
+    "/conversations/:id/integrations",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const roleNames = req.authUser!.roles.map((r) => r.name);
+      await conversationService.assertAgentCanAccessConversation(routeParam(req, "id"), conversationViewer(req));
+      res.json(await integrationService.getConversationIntegrationWorkspace(routeParam(req, "id"), roleNames));
     })
   );
 
@@ -1679,6 +1691,89 @@ export function buildApiRouter(app: Express): Router {
     requireAnyPermission("settings", "supervisor"),
     asyncHandler(async (_req, res) => {
       res.json(await integrationService.getIntegrationsUiSummary());
+    })
+  );
+
+  r.get(
+    "/settings/integration-apps",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (_req, res) => {
+      res.json(await integrationService.listIntegrationApps());
+    })
+  );
+
+  r.post(
+    "/settings/integration-apps",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      res.status(201).json(await integrationService.createIntegrationApp(req.body));
+    })
+  );
+
+  r.post(
+    "/settings/integration-apps/bootstrap-real-examples",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (_req, res) => {
+      res.status(201).json(await integrationService.bootstrapRealWebExamples());
+    })
+  );
+
+  r.put(
+    "/settings/integration-apps/:id",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      res.json(await integrationService.updateIntegrationApp(routeParam(req, "id"), req.body));
+    })
+  );
+
+  r.delete(
+    "/settings/integration-apps/:id",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      await integrationService.deleteIntegrationApp(routeParam(req, "id"));
+      res.status(204).send();
+    })
+  );
+
+  r.get(
+    "/settings/integration-bindings",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (_req, res) => {
+      res.json(await integrationService.listIntegrationBindings());
+    })
+  );
+
+  r.post(
+    "/settings/integration-bindings",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      res.status(201).json(await integrationService.createIntegrationBinding(req.body));
+    })
+  );
+
+  r.put(
+    "/settings/integration-bindings/:id",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      res.json(await integrationService.updateIntegrationBinding(routeParam(req, "id"), req.body));
+    })
+  );
+
+  r.delete(
+    "/settings/integration-bindings/:id",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      await integrationService.deleteIntegrationBinding(routeParam(req, "id"));
+      res.status(204).send();
     })
   );
 

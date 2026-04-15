@@ -2,6 +2,7 @@ import {
   Inbox, LayoutDashboard, Users, ShieldCheck, Settings, Headphones, Phone, BarChart3, BookOpen, UserCog, Link, Shield,
   FileBarChart, ArrowUpDown, UserCircle2,
 } from "lucide-react";
+import type { ComponentType } from "react";
 import { useQuery } from "@tanstack/react-query";
 import logo from "@/assets/logo.png";
 import { NavLink } from "@/components/NavLink";
@@ -13,28 +14,50 @@ import {
 import { cn } from "@/lib/utils";
 import { AgentStatusDot } from "@/components/StatusBadge";
 import { useAuthStore } from "@/stores/authStore";
+import type { AuthUser, PermissionKey } from "@/stores/authStore";
 import { apiJson } from "@/lib/api";
 
-const mainItems = [
-  { title: "Inbox", url: "/", icon: Inbox, inboxBadge: true as const },
-  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Colas en vivo", url: "/queues-live", icon: ArrowUpDown },
-  { title: "Supervisor", url: "/supervisor", icon: ShieldCheck },
-  { title: "Contactos", url: "/contacts", icon: Users },
-  { title: "Calidad", url: "/quality", icon: BarChart3 },
-  { title: "Reportes", url: "/reports", icon: FileBarChart },
+type SidebarItem = {
+  title: string;
+  url: string;
+  icon: ComponentType<{ className?: string }>;
+  inboxBadge?: true;
+  requiredAll?: PermissionKey[];
+  requiredAny?: PermissionKey[];
+};
+
+const mainItems: SidebarItem[] = [
+  { title: "Inbox", url: "/", icon: Inbox, inboxBadge: true, requiredAll: ["inbox"] },
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, requiredAll: ["dashboard"] },
+  { title: "Colas en vivo", url: "/queues-live", icon: ArrowUpDown, requiredAll: ["supervisor"] },
+  { title: "Supervisor", url: "/supervisor", icon: ShieldCheck, requiredAll: ["supervisor"] },
+  { title: "Contactos", url: "/contacts", icon: Users, requiredAll: ["contacts"] },
+  { title: "Calidad", url: "/quality", icon: BarChart3, requiredAll: ["quality"] },
+  { title: "Reportes", url: "/reports", icon: FileBarChart, requiredAll: ["reports"] },
 ];
 
-const settingsItems = [
-  { title: "Colas", url: "/settings/queues", icon: Phone },
-  { title: "Canales", url: "/settings/channels", icon: Headphones },
-  { title: "Equipos", url: "/settings/teams", icon: UserCog },
-  { title: "Skills", url: "/settings/skills", icon: BookOpen },
-  { title: "Roles", url: "/settings/roles", icon: Shield },
-  { title: "Usuarios", url: "/settings/users", icon: UserCircle2 },
-  { title: "Integraciones", url: "/settings/integrations", icon: Link },
-  { title: "General", url: "/settings/general", icon: Settings },
+const settingsItems: SidebarItem[] = [
+  { title: "Colas", url: "/settings/queues", icon: Phone, requiredAll: ["settings"] },
+  { title: "Canales", url: "/settings/channels", icon: Headphones, requiredAll: ["settings"] },
+  { title: "Equipos", url: "/settings/teams", icon: UserCog, requiredAll: ["settings"] },
+  { title: "Skills", url: "/settings/skills", icon: BookOpen, requiredAll: ["settings"] },
+  { title: "Roles", url: "/settings/roles", icon: Shield, requiredAll: ["settings"] },
+  { title: "Usuarios", url: "/settings/users", icon: UserCircle2, requiredAll: ["settings"] },
+  { title: "Integraciones", url: "/settings/integrations", icon: Link, requiredAny: ["settings", "supervisor"] },
+  { title: "General", url: "/settings/general", icon: Settings, requiredAll: ["settings"] },
 ];
+
+function hasPermission(user: AuthUser | null, key: PermissionKey): boolean {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  return Boolean(user.permissions?.[key]);
+}
+
+function canShowItem(user: AuthUser | null, item: SidebarItem): boolean {
+  if (item.requiredAll && !item.requiredAll.every((k) => hasPermission(user, k))) return false;
+  if (item.requiredAny && !item.requiredAny.some((k) => hasPermission(user, k))) return false;
+  return true;
+}
 
 export function AppSidebar() {
   const { state } = useSidebar();
@@ -44,6 +67,8 @@ export function AppSidebar() {
   const hydrated = useAuthStore((s) => s.hydrated);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isActive = (path: string) => location.pathname === path || (path !== "/" && location.pathname.startsWith(path));
+  const visibleMainItems = mainItems.filter((item) => canShowItem(user, item));
+  const visibleSettingsItems = settingsItems.filter((item) => canShowItem(user, item));
 
   const inboxCountQuery = useQuery({
     queryKey: ["conversations", "inbox-badge-count"],
@@ -82,50 +107,54 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="scrollbar-thin">
-        <SidebarGroup>
-          <SidebarGroupLabel>Principal</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {mainItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                    <NavLink to={item.url} end={item.url === "/"} className="hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary font-medium">
-                      <item.icon className="mr-2 h-4 w-4" />
-                      {!collapsed && (
-                        <span className="flex-1 flex items-center justify-between gap-2">
-                          {item.title}
-                          {"inboxBadge" in item && item.inboxBadge && inboxCount > 0 ? (
-                            <span className="bg-sidebar-primary text-sidebar-primary-foreground text-[10px] font-bold min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center rounded-full shrink-0">
-                              {inboxBadgeLabel}
-                            </span>
-                          ) : null}
-                        </span>
-                      )}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {visibleMainItems.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Principal</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {visibleMainItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                      <NavLink to={item.url} end={item.url === "/"} className="hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary font-medium">
+                        <item.icon className="mr-2 h-4 w-4" />
+                        {!collapsed && (
+                          <span className="flex-1 flex items-center justify-between gap-2">
+                            {item.title}
+                            {"inboxBadge" in item && item.inboxBadge && inboxCount > 0 ? (
+                              <span className="bg-sidebar-primary text-sidebar-primary-foreground text-[10px] font-bold min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center rounded-full shrink-0">
+                                {inboxBadgeLabel}
+                              </span>
+                            ) : null}
+                          </span>
+                        )}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
 
-        <SidebarGroup>
-          <SidebarGroupLabel>Configuración</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {settingsItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                    <NavLink to={item.url} className="hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary font-medium">
-                      <item.icon className="mr-2 h-4 w-4" />
-                      {!collapsed && <span>{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {visibleSettingsItems.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Configuración</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {visibleSettingsItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                      <NavLink to={item.url} className="hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary font-medium">
+                        <item.icon className="mr-2 h-4 w-4" />
+                        {!collapsed && <span>{item.title}</span>}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="p-3">
