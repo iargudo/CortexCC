@@ -46,20 +46,47 @@ export class VoiceAdapter implements ChannelAdapter {
 
     try {
       const base = toHttpBaseUrl(cfg.ariBaseUrl).replace(/\/+$/, "");
-      const response = await fetch(`${base}/ari/asterisk/info`, {
-        headers: {
-          Authorization: `Basic ${toBasicAuth(cfg.ariUsername, cfg.ariPassword)}`,
-        },
-      });
-      if (!response.ok) {
-        return { ok: false, detail: `ARI health check failed: HTTP ${response.status}` };
+      const authHeader = { Authorization: `Basic ${toBasicAuth(cfg.ariUsername, cfg.ariPassword)}` };
+      const response = await fetch(`${base}/ari/asterisk/info`, { headers: authHeader });
+      if (response.status === 401 || response.status === 403) {
+        return {
+          ok: false,
+          detail: `Credenciales ARI rechazadas (HTTP ${response.status}). Revisa usuario/contraseña en ari.conf.`,
+        };
       }
-      return { ok: true, detail: "Asterisk ARI reachable" };
-    } catch (err) {
+      if (!response.ok) {
+        return { ok: false, detail: `ARI no respondió correctamente: HTTP ${response.status}` };
+      }
+
+      const info = (await response.json()) as { system?: { version?: string } };
+      const version = info.system?.version?.trim() || "desconocida";
+      const warnings: string[] = [];
+
+      const appResponse = await fetch(`${base}/ari/applications/${encodeURIComponent(cfg.ariApp)}`, {
+        headers: authHeader,
+      });
+      if (appResponse.status === 404) {
+        warnings.push(
+          `La app Stasis "${cfg.ariApp}" no está suscrita. Las credenciales ARI son válidas, pero CortexCC debe estar corriendo para recibir llamadas.`
+        );
+      } else if (!appResponse.ok) {
+        warnings.push(`No se pudo verificar la app Stasis "${cfg.ariApp}" (HTTP ${appResponse.status}).`);
+      }
+
       return {
-        ok: false,
-        detail: err instanceof Error ? err.message : "ARI health check failed",
+        ok: true,
+        detail: `Asterisk ARI accesible (versión ${version}, app ${cfg.ariApp})`,
+        warnings: warnings.length ? warnings : undefined,
       };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "ARI health check failed";
+      if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
+        return {
+          ok: false,
+          detail: `No se pudo conectar a ${cfg.ariBaseUrl}. Verifica URL, puerto ARI y que Asterisk esté levantado.`,
+        };
+      }
+      return { ok: false, detail: message };
     }
   }
 

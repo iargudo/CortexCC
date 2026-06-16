@@ -1,5 +1,7 @@
 import type { ConversationStatus, Prisma, PrismaClient, RoutingStrategy } from "@prisma/client";
 import { assignLock, releaseAssignLock } from "../lib/redis.js";
+import { queueRoom, supervisorRoom, userRoom } from "../lib/socketRooms.js";
+import { getCurrentTenantKey } from "../lib/tenantContext.js";
 import type { Server as SocketIOServer } from "socket.io";
 
 type QueueWithRelations = Prisma.QueueGetPayload<{
@@ -61,6 +63,7 @@ export class RoutingEngine {
       const conversation = await this.prisma.conversation.findUnique({
         where: { id: conversationId },
         include: {
+          channel: true,
           queue: {
             include: {
               skills_required: { include: { skill: true } },
@@ -78,12 +81,26 @@ export class RoutingEngine {
       }
 
       const eligible = await this.getEligibleAgents(conversation.queue);
-      if (eligible.length === 0) {
+      const voiceFiltered =
+        conversation.channel?.type === "VOICE"
+          ? (
+              await this.prisma.user.findMany({
+                where: {
+                  id: { in: eligible.map((e) => e.userId) },
+                  sip_extension: { not: null },
+                },
+                select: { id: true },
+              })
+            ).map((u) => u.id)
+          : null;
+      const filteredEligible =
+        voiceFiltered != null ? eligible.filter((e) => voiceFiltered.includes(e.userId)) : eligible;
+      if (filteredEligible.length === 0) {
         await this.emitQueueUpdated(conversation.queue_id);
         return;
       }
 
-      const ranked = rankAgentsByStrategy(eligible, conversation.queue.routing_strategy);
+      const ranked = rankAgentsByStrategy(filteredEligible, conversation.queue.routing_strategy);
       const pick = ranked[0];
       await this.assignToAgent(conversation.id, pick.userId, conversation.queue_id);
     } finally {
@@ -178,13 +195,21 @@ export class RoutingEngine {
       include: { contact: true, channel: true, queue: { select: { name: true } } },
     });
 
-    this.io?.to(`user:${agentUserId}`).emit("conversation:assigned", {
+    if (full?.channel.type === "VOICE") {
+      const { ringAgentForConversation } = await import("../services/voice/voiceCallController.service.js");
+      void ringAgentForConversation(this.io, conversationId, agentUserId).catch((err) => {
+        console.error("[voice] Failed to ring agent after assignment:", err);
+      });
+    }
+
+    const tenantKey = getCurrentTenantKey();
+    this.io?.to(userRoom(tenantKey, agentUserId)).emit("conversation:assigned", {
       conversationId,
       contact_name: full?.contact?.name,
       channel: full?.channel.type,
       queue: full?.queue?.name,
     });
-    this.io?.to(`user:${agentUserId}`).emit("notification:new", {
+    this.io?.to(userRoom(tenantKey, agentUserId)).emit("notification:new", {
       type: "NEW_ASSIGNMENT",
       conversation_id: conversationId,
       data: {
@@ -194,12 +219,15 @@ export class RoutingEngine {
       },
       timestamp: new Date().toISOString(),
     });
-    this.io?.emit("supervisor:live_update", { type: "assign", conversationId, queueId });
+    this.io
+      ?.to(supervisorRoom(tenantKey))
+      .emit("supervisor:live_update", { type: "assign", conversationId, queueId, tenantKey });
     await this.emitQueueUpdated(queueId);
   }
 
   private async emitQueueUpdated(queueId: string): Promise<void> {
-    this.io?.to(`queue:${queueId}`).emit("queue:updated", { queueId });
+    const tenantKey = getCurrentTenantKey();
+    this.io?.to(queueRoom(tenantKey, queueId)).emit("queue:updated", { queueId });
   }
 
   async recommendAgent(queueId: string, strategy: RoutingStrategy): Promise<string | null> {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,10 +8,24 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Users, Plus, Edit2, Trash2 } from "lucide-react";
+import { Users, Plus, Edit2, Trash2, UserPlus } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { apiJson } from "@/lib/api";
 
 type TeamRow = { id: string; name: string; description?: string; member_count: number };
+
+type ApiUser = {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  roles: { role: { name: string } }[];
+};
+
+type TeamMemberRow = {
+  user_id: string;
+  user: { id: string; name: string; email: string; status: string };
+};
 
 export default function SettingsTeamsPage() {
   const qc = useQueryClient();
@@ -19,6 +33,9 @@ export default function SettingsTeamsPage() {
   const [editing, setEditing] = useState<TeamRow | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [membersTeam, setMembersTeam] = useState<TeamRow | null>(null);
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [memberSearch, setMemberSearch] = useState("");
 
   const { data: teams = [], isLoading, error } = useQuery({
     queryKey: ["settings", "teams"],
@@ -43,6 +60,47 @@ export default function SettingsTeamsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const usersQuery = useQuery({
+    queryKey: ["settings", "users", "teams-members"],
+    queryFn: () => apiJson<ApiUser[]>("/users"),
+    enabled: Boolean(membersTeam),
+  });
+
+  const membersQuery = useQuery({
+    queryKey: ["settings", "teams", membersTeam?.id, "members"],
+    queryFn: () => apiJson<TeamMemberRow[]>(`/settings/teams/${encodeURIComponent(membersTeam!.id)}/members`),
+    enabled: Boolean(membersTeam),
+  });
+
+  const membersMut = useMutation({
+    mutationFn: () => {
+      if (!membersTeam) throw new Error("Sin equipo");
+      return apiJson<{ member_count: number }>(`/settings/teams/${encodeURIComponent(membersTeam.id)}/members`, {
+        method: "PUT",
+        body: JSON.stringify({ user_ids: [...selectedUserIds] }),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["settings", "teams"] });
+      void qc.invalidateQueries({ queryKey: ["settings", "teams", membersTeam?.id, "members"] });
+      void qc.invalidateQueries({ queryKey: ["queues"] });
+      void qc.invalidateQueries({ queryKey: ["agents"] });
+      toast.success("Miembros del equipo actualizados");
+      setMembersTeam(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const openMembersDialog = (team: TeamRow) => {
+    setMembersTeam(team);
+    setMemberSearch("");
+  };
+
+  useEffect(() => {
+    if (!membersTeam || !membersQuery.data) return;
+    setSelectedUserIds(new Set(membersQuery.data.map((m) => m.user_id)));
+  }, [membersTeam, membersQuery.data]);
+
   const delMut = useMutation({
     mutationFn: (id: string) => apiJson(`/settings/teams/${id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -56,7 +114,12 @@ export default function SettingsTeamsPage() {
   return (
     <div className="p-6 overflow-y-auto h-full scrollbar-thin space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">Equipos</h1>
+        <div>
+          <h1 className="text-xl font-bold">Equipos</h1>
+          <p className="text-xs text-muted-foreground mt-1">
+            Asigna agentes a cada equipo. Las colas usan el equipo vinculado para enrutar conversaciones.
+          </p>
+        </div>
         <Button
           size="sm"
           className="gap-1"
@@ -110,15 +173,98 @@ export default function SettingsTeamsPage() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className="space-y-3">
               {t.description && <p className="text-xs text-muted-foreground">{t.description}</p>}
-              <Badge variant="outline" className="text-[10px]">
-                {t.member_count} miembros
-              </Badge>
+              <div className="flex items-center justify-between gap-2">
+                <Badge variant="outline" className="text-[10px]">
+                  {t.member_count} miembros
+                </Badge>
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => openMembersDialog(t)}>
+                  <UserPlus size={12} /> Asignar agentes
+                </Button>
+              </div>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      <Dialog
+        open={Boolean(membersTeam)}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setMembersTeam(null);
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Asignar agentes — {membersTeam?.name}</DialogTitle>
+          </DialogHeader>
+          <Input
+            placeholder="Buscar por nombre o email…"
+            value={memberSearch}
+            onChange={(e) => setMemberSearch(e.target.value)}
+            className="h-8 text-sm"
+          />
+          <div className="flex-1 overflow-y-auto border rounded-md min-h-[220px] max-h-[360px]">
+            {usersQuery.isLoading || membersQuery.isLoading ? (
+              <p className="p-3 text-sm text-muted-foreground">Cargando usuarios…</p>
+            ) : (
+              <div className="divide-y">
+                {(usersQuery.data ?? [])
+                  .filter((u) => {
+                    const q = memberSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    const label = `${u.first_name} ${u.last_name} ${u.email}`.toLowerCase();
+                    return label.includes(q);
+                  })
+                  .map((u) => {
+                    const label = `${u.first_name} ${u.last_name}`.trim() || u.email;
+                    const roles = u.roles.map((r) => r.role.name).join(", ");
+                    const checked = selectedUserIds.has(u.id);
+                    return (
+                      <label
+                        key={u.id}
+                        className="flex items-center gap-3 px-3 py-2 hover:bg-muted/50 cursor-pointer"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => {
+                            setSelectedUserIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(u.id)) next.delete(u.id);
+                              else next.add(u.id);
+                              return next;
+                            });
+                          }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">{label}</p>
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            {u.email}
+                            {roles ? ` · ${roles}` : ""}
+                          </p>
+                        </div>
+                      </label>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Seleccionados: {selectedUserIds.size}
+            {membersQuery.data && membersQuery.data.length > 0 && selectedUserIds.size === 0
+              ? " · el equipo quedará sin miembros"
+              : ""}
+          </p>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setMembersTeam(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => membersMut.mutate()} disabled={membersMut.isPending}>
+              Guardar asignación
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

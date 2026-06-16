@@ -6,6 +6,28 @@ AWS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$AWS_DIR/../.." && pwd)"
 ENV_FILE="${ENV_FILE:-$AWS_DIR/.env}"
 
+# URL vars that may contain REPLACE_PUBLIC_IP or PUBLIC_IP before EC2 exists
+URL_VARS=(
+  CORS_ORIGIN
+  SOCKETIO_CORS_ORIGIN
+  AGENTHUB_PUBLIC_URL
+  CORTEX_CC_API_BASE_URL
+  VITE_API_URL
+  VITE_WS_URL
+)
+
+substitute_public_ip() {
+  local ip="$1"
+  local var val
+  for var in "${URL_VARS[@]}"; do
+    val="${!var:-}"
+    [[ -z "$val" ]] && continue
+    val="${val//REPLACE_PUBLIC_IP/$ip}"
+    val="${val//PUBLIC_IP/$ip}"
+    printf -v "$var" '%s' "$val"
+  done
+}
+
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "Missing env file: $ENV_FILE"
   echo "Copy deploy/aws/.env.example to deploy/aws/.env and fill values."
@@ -18,7 +40,7 @@ set +a
 
 required_vars=(
   AWS_REGION STACK_NAME INSTANCE_TYPE AMI_ID KEY_NAME
-  GIT_URL GIT_REF BACKEND_PORT FRONTEND_PORT DATABASE_URL REDIS_URL
+  GIT_URL GIT_REF BACKEND_PORT FRONTEND_PORT MASTER_DATABASE_URL DATABASE_URL REDIS_URL
 )
 
 for v in "${required_vars[@]}"; do
@@ -32,6 +54,14 @@ if [[ "$BACKEND_PORT" != "3030" || "$FRONTEND_PORT" != "8080" ]]; then
   echo "Ports are fixed by project rules: BACKEND_PORT=3030 and FRONTEND_PORT=8080"
   exit 1
 fi
+
+RUN_PRISMA_SEED="${RUN_PRISMA_SEED:-false}"
+API_PREFIX="${API_PREFIX:-/api}"
+QUEUE_CONCURRENCY="${QUEUE_CONCURRENCY:-5}"
+ENABLE_JOBS="${ENABLE_JOBS:-true}"
+SOCKETIO_PATH="${SOCKETIO_PATH:-/socket.io}"
+VITE_SOCKET_PATH="${VITE_SOCKET_PATH:-/socket.io}"
+PRISMA_LOG_QUERIES="${PRISMA_LOG_QUERIES:-false}"
 
 for cmd in aws ssh scp curl; do
   command -v "$cmd" >/dev/null || { echo "Missing command: $cmd"; exit 1; }
@@ -86,6 +116,9 @@ PUBLIC_IP="$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$
   --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
 echo "EC2 running at: $PUBLIC_IP"
 
+echo "Applying public IP to URL variables (REPLACE_PUBLIC_IP / PUBLIC_IP)..."
+substitute_public_ip "$PUBLIC_IP"
+
 echo "Waiting for SSH..."
 for _ in {1..60}; do
   if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$KEY_PATH" ubuntu@"$PUBLIC_IP" "echo ok" >/dev/null 2>&1; then
@@ -104,7 +137,7 @@ sudo apt-get install -y nodejs
 sudo npm install -g pm2
 EOF
 
-echo "Deploying CortexCC..."
+echo "Deploying CortexCC (migrate-all-tenants, seed=${RUN_PRISMA_SEED})..."
 ssh -o StrictHostKeyChecking=no -i "$KEY_PATH" ubuntu@"$PUBLIC_IP" bash <<EOF
 set -euo pipefail
 rm -rf ~/CortexCC
@@ -119,6 +152,7 @@ PRISMA_LOG_QUERIES=${PRISMA_LOG_QUERIES}
 PORT=${BACKEND_PORT}
 API_PREFIX=${API_PREFIX}
 CORS_ORIGIN=${CORS_ORIGIN}
+MASTER_DATABASE_URL=${MASTER_DATABASE_URL}
 DATABASE_URL=${DATABASE_URL}
 REDIS_URL=${REDIS_URL}
 QUEUE_CONCURRENCY=${QUEUE_CONCURRENCY}
@@ -139,7 +173,14 @@ AZURE_STORAGE_CONTAINER=${AZURE_STORAGE_CONTAINER}
 CHANNEL_CONFIG_ENCRYPTION_KEY=${CHANNEL_CONFIG_ENCRYPTION_KEY}
 ENVEOF
 npx prisma generate
-npx prisma db push
+npx prisma generate --schema=prisma/master.schema.prisma
+if [[ "${RUN_SETUP_MASTER:-false}" == "true" ]]; then
+  SEED_LOCAL_TENANT=true npm run setup:master
+fi
+npm run migrate:all-tenants
+if [[ "${RUN_PRISMA_SEED}" == "true" ]]; then
+  npm run seed:tenant
+fi
 pm2 start npm --name cortexcc-backend -- start
 
 cd ~/CortexCC/frontend
@@ -155,6 +196,19 @@ pm2 save
 pm2 startup systemd -u ubuntu --hp /home/ubuntu | tail -n 1 | bash
 EOF
 
+echo "Validating deployment..."
+sleep 5
+if curl -sf "http://$PUBLIC_IP:${BACKEND_PORT}${API_PREFIX}/health" >/dev/null; then
+  echo "Backend health: OK"
+else
+  echo "Warning: backend health check failed (service may still be starting)"
+fi
+
+echo ""
 echo "Deployment complete."
+echo "Instance: $INSTANCE_ID"
 echo "Frontend: http://$PUBLIC_IP:${FRONTEND_PORT}"
 echo "Backend:  http://$PUBLIC_IP:${BACKEND_PORT}${API_PREFIX}/health"
+if [[ "$RUN_PRISMA_SEED" == "true" ]]; then
+  echo "Seed:     demo users loaded (see backend/prisma/seed.ts)"
+fi

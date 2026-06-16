@@ -8,9 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { CheckCircle, XCircle, RefreshCw, Plus, Trash2, Zap, Info, Layers, PanelRight, Sparkles, WandSparkles } from "lucide-react";
+import { CheckCircle, XCircle, RefreshCw, Plus, Trash2, Zap, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 import { apiJson } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
@@ -55,6 +56,8 @@ export default function IntegrationsPage() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editApp, setEditApp] = useState<IntegrationApp | null>(null);
   const [editBinding, setEditBinding] = useState<IntegrationBinding | null>(null);
+  const [bindingsModalOpen, setBindingsModalOpen] = useState(false);
+  const [selectedAppForBindings, setSelectedAppForBindings] = useState<IntegrationApp | null>(null);
   const [appForm, setAppForm] = useState({
     key: "",
     name: "",
@@ -91,24 +94,16 @@ export default function IntegrationsPage() {
   const apps = appsQuery.data ?? [];
   const bindings = bindingsQuery.data ?? [];
   const appOptions = useMemo(() => apps.map((a) => ({ id: a.id, name: a.name })), [apps]);
-  const appById = useMemo(() => new Map(apps.map((a) => [a.id, a])), [apps]);
+  const selectedAppBindings = useMemo(
+    () => (selectedAppForBindings ? bindings.filter((binding) => binding.app_id === selectedAppForBindings.id) : []),
+    [bindings, selectedAppForBindings]
+  );
 
-  const describeBinding = (binding: IntegrationBinding) => {
+  const bindingSourcesText = (binding: IntegrationBinding) => {
     const sourceList = Array.isArray((binding.rules as Record<string, unknown> | undefined)?.sources)
       ? ((binding.rules as Record<string, unknown>).sources as unknown[]).map((s) => String(s)).filter(Boolean)
       : [];
-
-    const baseScope =
-      binding.scope_type === "GLOBAL"
-        ? "todas las conversaciones"
-        : binding.scope_type === "CHANNEL"
-          ? `canal ${binding.scope_id || "sin valor"}`
-          : binding.scope_type === "QUEUE"
-            ? `cola ${binding.scope_id || "sin valor"}`
-            : `rol ${binding.scope_id || "sin valor"}`;
-
-    if (sourceList.length === 0) return `Aparece para ${baseScope}`;
-    return `Aparece para ${baseScope} y fuentes: ${sourceList.join(", ")}`;
+    return sourceList.length > 0 ? sourceList.join(", ") : "cualquiera";
   };
 
   const toKeyFromName = (name: string) =>
@@ -118,6 +113,8 @@ export default function IntegrationsPage() {
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "");
 
+  const isEnvCredentialRef = (value: string) => value.trim().toLowerCase().startsWith("env:");
+
   const saveAppMut = useMutation({
     mutationFn: async () => {
       let parsedConfig: Record<string, unknown> = {};
@@ -126,6 +123,9 @@ export default function IntegrationsPage() {
       } catch {
         throw new Error("Config JSON inválido");
       }
+      if (isEnvCredentialRef(appForm.credentials_ref)) {
+        throw new Error("Credencial inválida: usa un valor persistido en DB, no env:");
+      }
       const payload = {
         key: appForm.key,
         name: appForm.name,
@@ -133,7 +133,7 @@ export default function IntegrationsPage() {
         mode: appForm.mode,
         auth_type: appForm.auth_type,
         base_url: appForm.base_url || null,
-        credentials_ref: appForm.credentials_ref || null,
+        credentials_ref: appForm.credentials_ref.trim() || null,
         is_active: appForm.is_active,
         config: parsedConfig,
       };
@@ -372,10 +372,10 @@ export default function IntegrationsPage() {
     setAppDialogOpen(true);
   };
 
-  const openCreateBinding = () => {
+  const openCreateBinding = (appId?: string) => {
     setEditBinding(null);
     setBindingForm({
-      app_id: appOptions[0]?.id ?? "",
+      app_id: appId ?? appOptions[0]?.id ?? "",
       scope_type: "GLOBAL",
       scope_id: "",
       placement: "right_rail",
@@ -398,6 +398,11 @@ export default function IntegrationsPage() {
       rules: JSON.stringify(binding.rules ?? {}, null, 2),
     });
     setBindingDialogOpen(true);
+  };
+
+  const openBindingsModal = (app: IntegrationApp) => {
+    setSelectedAppForBindings(app);
+    setBindingsModalOpen(true);
   };
 
   return (
@@ -461,194 +466,164 @@ export default function IntegrationsPage() {
         {isAdmin && (
           <TabsContent value="design" className="space-y-4 mt-4">
             <Card>
-              <CardContent className="pt-5">
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div className="rounded-lg border p-3 bg-muted/20">
-                    <p className="text-xs font-semibold flex items-center gap-1">
-                      <Layers size={12} /> Paso 1: Crear app
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Define tipo (SNAPSHOT/EMBED/ACTIONS), nombre e ícono.
-                    </p>
-                  </div>
-                  <div className="rounded-lg border p-3 bg-muted/20">
-                    <p className="text-xs font-semibold flex items-center gap-1">
-                      <PanelRight size={12} /> Paso 2: Publicar en rail
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Crea binding visible y define cuándo debe aparecer.
-                    </p>
-                  </div>
-                  <div className="rounded-lg border p-3 bg-muted/20">
-                    <p className="text-xs font-semibold flex items-center gap-1">
-                      <Sparkles size={12} /> Paso 3: Probar
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Abre una conversación y valida que el botón aparezca.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 mt-4">
-                  <p className="text-xs text-muted-foreground">
-                    Tip: si no aparece, normalmente falta `is_visible`, `scope` o coincide mal `rules.sources`.
+              <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+                <div>
+                  <CardTitle className="text-sm">Maestro: apps de integración</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Gestiona apps y abre el detalle para administrar sus bindings en tabla.
                   </p>
-                  <div className="flex gap-2">
-                    <Button size="sm" className="h-7 text-xs gap-1" onClick={() => setWizardOpen(true)}>
-                      <WandSparkles size={12} /> Wizard nueva integración
-                    </Button>
-                  </div>
                 </div>
-              </CardContent>
-            </Card>
-
-            <div className="grid xl:grid-cols-2 gap-4">
-              <Card>
-                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-                  <div>
-                    <CardTitle className="text-sm">Apps</CardTitle>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Qué hace cada integración.
-                    </p>
-                  </div>
-                  <Button size="sm" className="h-7 text-xs gap-1" onClick={openCreateApp}>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={() => setWizardOpen(true)}>
+                    <WandSparkles size={12} /> Wizard
+                  </Button>
+                  <Button size="sm" className="h-8 text-xs gap-1" onClick={openCreateApp}>
                     <Plus size={12} /> Nueva app
                   </Button>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {appsQuery.isLoading && <p className="text-xs text-muted-foreground">Cargando apps…</p>}
-                  {!appsQuery.isLoading && apps.length === 0 && (
-                    <p className="text-xs text-muted-foreground">No hay apps creadas todavía.</p>
-                  )}
-                  {apps.map((app) => (
-                    <div key={app.id} className="rounded-md border p-3 text-xs space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-medium truncate">{app.name}</p>
-                          <p className="text-muted-foreground truncate">key: {app.key}</p>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => openEditApp(app)}>
-                            Editar
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 text-[10px] text-destructive"
-                            disabled={deleteAppMut.isPending}
-                            onClick={() => {
-                              if (window.confirm(`¿Eliminar app ${app.name}?`)) deleteAppMut.mutate(app.id);
-                            }}
-                          >
-                            <Trash2 size={10} />
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        <Badge variant="secondary" className="text-[10px]">
-                          {app.mode}
-                        </Badge>
-                        <Badge variant="outline" className="text-[10px]">
-                          {app.auth_type}
-                        </Badge>
-                        {!app.is_active && (
-                          <Badge variant="destructive" className="text-[10px]">
-                            Inactiva
-                          </Badge>
-                        )}
-                      </div>
-                      {app.mode === "EMBED" && (
-                        <p className="text-[11px] text-muted-foreground">
-                          Visualización: {String(((app.config ?? {}) as Record<string, unknown>).view_mode ?? "INLINE")}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {appsQuery.error && <p className="text-xs text-destructive">{(appsQuery.error as Error).message}</p>}
+                {bindingsQuery.error && <p className="text-xs text-destructive">{(bindingsQuery.error as Error).message}</p>}
+                {appsQuery.isLoading && <p className="text-xs text-muted-foreground">Cargando apps…</p>}
+                {!appsQuery.isLoading && apps.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No hay apps creadas todavía.</p>
+                )}
+                {apps.length > 0 && (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nombre</TableHead>
+                        <TableHead>Key</TableHead>
+                        <TableHead>Modo</TableHead>
+                        <TableHead>Auth</TableHead>
+                        <TableHead>Estado</TableHead>
+                        <TableHead className="text-right">Acciones</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {apps.map((app) => (
+                        <TableRow key={app.id}>
+                          <TableCell className="font-medium">{app.name}</TableCell>
+                          <TableCell className="font-mono text-xs">{app.key}</TableCell>
+                          <TableCell>{app.mode}</TableCell>
+                          <TableCell>{app.auth_type}</TableCell>
+                          <TableCell>{app.is_active ? "Activa" : "Inactiva"}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openBindingsModal(app)}>
+                                Bindings
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openEditApp(app)}>
+                                Editar
+                              </Button>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                className="h-7 text-xs"
+                                disabled={deleteAppMut.isPending}
+                                onClick={() => {
+                                  if (window.confirm(`¿Eliminar app ${app.name}?`)) deleteAppMut.mutate(app.id);
+                                }}
+                              >
+                                <Trash2 size={12} />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+      </Tabs>
 
-              <Card>
-                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-                  <div>
-                    <CardTitle className="text-sm">Publicación en rail</CardTitle>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Define cuándo y dónde aparece el botón.
-                    </p>
-                  </div>
-                  <Button size="sm" className="h-7 text-xs gap-1" onClick={openCreateBinding}>
-                    <Plus size={12} /> Nuevo binding
-                  </Button>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {bindingsQuery.isLoading && <p className="text-xs text-muted-foreground">Cargando bindings…</p>}
-                  {!bindingsQuery.isLoading && bindings.length === 0 && (
-                    <p className="text-xs text-muted-foreground">No hay publicaciones en rail todavía.</p>
-                  )}
-                  {bindings.map((binding) => (
-                    <div key={binding.id} className="rounded-md border p-3 text-xs space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-medium truncate">{binding.app_name}</p>
-                          <p className="text-muted-foreground truncate">{describeBinding(binding)}</p>
-                        </div>
-                        <div className="flex gap-1">
+      <Dialog
+        open={bindingsModalOpen}
+        onOpenChange={(open) => {
+          setBindingsModalOpen(open);
+          if (!open) setSelectedAppForBindings(null);
+        }}
+      >
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>
+              Detalle: bindings de {selectedAppForBindings?.name ?? "app"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                className="h-8 text-xs gap-1"
+                onClick={() => openCreateBinding(selectedAppForBindings?.id)}
+                disabled={!selectedAppForBindings}
+              >
+                <Plus size={12} /> Nuevo binding
+              </Button>
+            </div>
+            {bindingsQuery.isLoading && <p className="text-xs text-muted-foreground">Cargando bindings…</p>}
+            {!bindingsQuery.isLoading && selectedAppForBindings && selectedAppBindings.length === 0 && (
+              <p className="text-xs text-muted-foreground">Esta app todavía no tiene bindings.</p>
+            )}
+            {selectedAppBindings.length > 0 && (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Scope</TableHead>
+                    <TableHead>Scope ID</TableHead>
+                    <TableHead>Placement</TableHead>
+                    <TableHead>Orden</TableHead>
+                    <TableHead>Visible</TableHead>
+                    <TableHead>Sources</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selectedAppBindings.map((binding) => (
+                    <TableRow key={binding.id}>
+                      <TableCell>{binding.scope_type}</TableCell>
+                      <TableCell className="font-mono text-xs">{binding.scope_id || "-"}</TableCell>
+                      <TableCell>{binding.placement}</TableCell>
+                      <TableCell>{binding.sort_order}</TableCell>
+                      <TableCell>{binding.is_visible ? "Sí" : "No"}</TableCell>
+                      <TableCell className="max-w-[260px] truncate" title={bindingSourcesText(binding)}>
+                        {bindingSourcesText(binding)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
-                            className="h-6 text-[10px]"
+                            className="h-7 text-xs"
                             onClick={() => openEditBinding(binding)}
                           >
                             Editar
                           </Button>
                           <Button
-                            variant="ghost"
+                            variant="destructive"
                             size="sm"
-                            className="h-6 text-[10px] text-destructive"
+                            className="h-7 text-xs"
                             disabled={deleteBindingMut.isPending}
                             onClick={() => {
                               if (window.confirm(`¿Eliminar binding ${binding.app_name}?`)) deleteBindingMut.mutate(binding.id);
                             }}
                           >
-                            <Trash2 size={10} />
+                            <Trash2 size={12} />
                           </Button>
                         </div>
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        <Badge variant="outline" className="text-[10px]">
-                          {binding.scope_type}
-                          {binding.scope_id ? `: ${binding.scope_id}` : ""}
-                        </Badge>
-                        <Badge variant="outline" className="text-[10px]">
-                          {binding.placement}
-                        </Badge>
-                        <Badge variant="outline" className="text-[10px]">
-                          orden {binding.sort_order}
-                        </Badge>
-                        {appById.get(binding.app_id)?.mode && (
-                          <Badge variant="secondary" className="text-[10px]">
-                            {appById.get(binding.app_id)?.mode}
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground flex items-start gap-1">
-                        <Info size={12} className="mt-[1px] shrink-0" />
-                        Fuente permitida:{" "}
-                        {Array.isArray((binding.rules as Record<string, unknown> | undefined)?.sources)
-                          ? ((binding.rules as Record<string, unknown>).sources as unknown[]).map((s) => String(s)).join(", ")
-                          : "cualquiera"}
-                      </p>
-                      {!binding.is_visible && (
-                        <Badge variant="outline" className="text-[10px]">
-                          Oculto
-                        </Badge>
-                      )}
-                    </div>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-        )}
-      </Tabs>
+                </TableBody>
+              </Table>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={appDialogOpen} onOpenChange={setAppDialogOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -681,7 +656,18 @@ export default function IntegrationsPage() {
                   value={appForm.icon}
                   onChange={(e) => setAppForm((s) => ({ ...s, icon: e.target.value }))}
                   className="h-8 text-sm"
+                  placeholder="Ej: wallet, wallet-2 o Wallet2"
                 />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  <a
+                    href="https://lucide.dev/icons"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline hover:text-foreground"
+                  >
+                    Ver catálogo de íconos
+                  </a>
+                </p>
               </div>
               <div>
                 <Label className="text-xs">Modo</Label>
@@ -740,12 +726,14 @@ export default function IntegrationsPage() {
                 />
               </div>
               <div>
-                <Label className="text-xs">Credentials ref</Label>
+                <Label className="text-xs">Credencial (DB)</Label>
                 <Input
                   value={appForm.credentials_ref}
                   onChange={(e) => setAppForm((s) => ({ ...s, credentials_ref: e.target.value }))}
                   className="h-8 text-sm"
+                  placeholder="Se guarda en integration_apps.credentials_ref"
                 />
+                <p className="text-[10px] text-muted-foreground mt-1">No usar prefijo <code>env:</code>.</p>
               </div>
             </div>
             <div>

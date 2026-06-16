@@ -15,16 +15,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Edit2, Trash2, Clock, MessageCircle, FileCheck, Calendar } from "lucide-react";
 import { apiJson } from "@/lib/api";
-
-const BH_DEFAULT_SCHEDULE = {
-  monday: [{ start: "09:00", end: "18:00" }],
-  tuesday: [{ start: "09:00", end: "18:00" }],
-  wednesday: [{ start: "09:00", end: "18:00" }],
-  thursday: [{ start: "09:00", end: "18:00" }],
-  friday: [{ start: "09:00", end: "18:00" }],
-  saturday: [] as { start: string; end: string }[],
-  sunday: [] as { start: string; end: string }[],
-};
+import { BusinessHoursScheduleEditor } from "@/components/settings/BusinessHoursScheduleEditor";
+import {
+  DEFAULT_SCHEDULE,
+  TIMEZONE_OPTIONS,
+  dayLabel,
+  formatScheduleSlots,
+  normalizeSchedule,
+  validateSchedule,
+  type WeekSchedule,
+} from "@/lib/businessHours";
 
 const CHANNELS: ChannelType[] = ["WHATSAPP", "EMAIL", "VOICE", "WEBCHAT", "TEAMS"];
 
@@ -168,17 +168,13 @@ export default function SettingsGeneralPage() {
   const [editingBh, setEditingBh] = useState<BusinessHours | null>(null);
   const [bhName, setBhName] = useState("");
   const [bhTz, setBhTz] = useState("America/Guayaquil");
-  const [bhJson, setBhJson] = useState("");
+  const [bhSchedule, setBhSchedule] = useState<WeekSchedule>(DEFAULT_SCHEDULE);
 
   const bhSave = useMutation({
     mutationFn: async () => {
-      let schedule: unknown;
-      try {
-        schedule = JSON.parse(bhJson) as unknown;
-      } catch {
-        throw new Error("JSON de horario inválido");
-      }
-      const body = { name: bhName.trim(), timezone: bhTz, schedule };
+      const scheduleError = validateSchedule(bhSchedule);
+      if (scheduleError) throw new Error(scheduleError);
+      const body = { name: bhName.trim(), timezone: bhTz, schedule: bhSchedule };
       if (editingBh) {
         await apiJson(`/settings/business-hours/${editingBh.id}`, { method: "PUT", body: JSON.stringify(body) });
       } else {
@@ -477,7 +473,7 @@ export default function SettingsGeneralPage() {
                 setEditingBh(null);
                 setBhName("");
                 setBhTz("America/Guayaquil");
-                setBhJson(JSON.stringify(BH_DEFAULT_SCHEDULE, null, 2));
+                setBhSchedule(structuredClone(DEFAULT_SCHEDULE));
                 setBhOpen(true);
               }}
             >
@@ -499,7 +495,7 @@ export default function SettingsGeneralPage() {
                         setEditingBh(bh);
                         setBhName(bh.name);
                         setBhTz(bh.timezone);
-                        setBhJson(JSON.stringify(bh.schedule ?? BH_DEFAULT_SCHEDULE, null, 2));
+                        setBhSchedule(normalizeSchedule(bh.schedule));
                         setBhOpen(true);
                       }}
                     >
@@ -510,16 +506,14 @@ export default function SettingsGeneralPage() {
                 <CardContent>
                   <p className="text-xs text-muted-foreground mb-2">Zona horaria: {bh.timezone}</p>
                   <div className="space-y-1 text-xs">
-                    {typeof bh.schedule === "object" &&
-                      bh.schedule !== null &&
-                      Object.entries(bh.schedule as Record<string, { start: string; end: string }[]>).map(([day, slots]) => (
-                        <div key={day} className="flex items-center justify-between gap-2">
-                          <span className="capitalize text-muted-foreground w-24 shrink-0">{day}</span>
-                          <span className="font-medium text-right">
-                            {Array.isArray(slots) ? slots.map((slot) => `${slot.start} - ${slot.end}`).join(", ") : "—"}
-                          </span>
-                        </div>
-                      ))}
+                    {Object.entries(normalizeSchedule(bh.schedule)).map(([day, slots]) => (
+                      <div key={day} className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground w-24 shrink-0">{dayLabel(day)}</span>
+                        <span className={`font-medium text-right ${slots.length === 0 ? "text-muted-foreground" : ""}`}>
+                          {formatScheduleSlots(slots)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>
@@ -654,7 +648,7 @@ export default function SettingsGeneralPage() {
       </Dialog>
 
       <Dialog open={bhOpen} onOpenChange={setBhOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>{editingBh ? "Editar horario" : "Nuevo horario laboral"}</DialogTitle>
           </DialogHeader>
@@ -665,12 +659,23 @@ export default function SettingsGeneralPage() {
             </div>
             <div>
               <Label className="text-xs">Zona horaria</Label>
-              <Input value={bhTz} onChange={(e) => setBhTz(e.target.value)} className="h-8 text-sm" />
+              <Select value={bhTz} onValueChange={setBhTz}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIMEZONE_OPTIONS.some((tz) => tz.value === bhTz) ? null : (
+                    <SelectItem value={bhTz}>{bhTz}</SelectItem>
+                  )}
+                  {TIMEZONE_OPTIONS.map((tz) => (
+                    <SelectItem key={tz.value} value={tz.value}>
+                      {tz.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div>
-              <Label className="text-xs">Schedule (JSON)</Label>
-              <Textarea value={bhJson} onChange={(e) => setBhJson(e.target.value)} className="min-h-[200px] text-xs font-mono" />
-            </div>
+            <BusinessHoursScheduleEditor value={bhSchedule} onChange={setBhSchedule} />
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setBhOpen(false)}>

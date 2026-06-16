@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Conversation, ChannelType } from "@/data/mock";
 import { ConversationList } from "@/components/inbox/ConversationList";
 import { ChatArea } from "@/components/inbox/ChatArea";
 import { ContextPanel } from "@/components/inbox/ContextPanel";
+import { InboxWorkspaceEmpty } from "@/components/inbox/InboxWorkspaceEmpty";
 import { apiJson } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import { useAuthStore } from "@/stores/authStore";
@@ -44,6 +45,7 @@ export default function InboxPage() {
   const listQuery = useQuery({
     queryKey: ["conversations", tab, channelFilter],
     enabled: isAuthenticated,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const q = new URLSearchParams({ tab, limit: "50", page: "1" });
       if (channelFilter) q.set("channel", channelFilter);
@@ -54,6 +56,18 @@ export default function InboxPage() {
   });
 
   const conversations = listQuery.data?.data ?? [];
+  const listInitialLoad = listQuery.isLoading && !listQuery.data;
+  const listRefetching = listQuery.isFetching && !listInitialLoad;
+
+  const emptyListSnapshot = useRef({ count: 0, hasConversations: false });
+  useEffect(() => {
+    if (!listQuery.isFetching && listQuery.data) {
+      emptyListSnapshot.current = {
+        count: conversations.length,
+        hasConversations: conversations.length > 0,
+      };
+    }
+  }, [listQuery.isFetching, listQuery.data, conversations.length]);
 
   const detailQuery = useQuery({
     queryKey: ["conversation", selectedId],
@@ -72,7 +86,7 @@ export default function InboxPage() {
     return conversations.find((c) => c.id === selectedId) ?? null;
   }, [selectedId, detailQuery.data, detailQuery.isError, conversations]);
 
-  /** No pisar selección por URL ni forzar otra conv. si el detalle aún carga o falló. */
+  /** Mantener selección válida por URL; no forzar la primera conversación al abrir la bandeja. */
   useEffect(() => {
     if (!listQuery.isSuccess) return;
     if (!conversations.length) {
@@ -89,9 +103,16 @@ export default function InboxPage() {
       }
       return;
     }
-    if (conversationFromUrl && selectedId === conversationFromUrl) return;
-    if (!selectedId || !conversations.some((c) => c.id === selectedId)) {
-      setSelectedId(conversations[0].id);
+    if (selectedId && !conversations.some((c) => c.id === selectedId)) {
+      setSelectedId(null);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("conversation");
+          return next;
+        },
+        { replace: true }
+      );
     }
   }, [listQuery.isSuccess, conversations, selectedId, conversationFromUrl, setSearchParams]);
 
@@ -143,13 +164,7 @@ export default function InboxPage() {
   }, [detailQuery.isError, selectedId, conversations, setSearchParams]);
 
   let center: ReactNode;
-  if (listQuery.isLoading) {
-    center = (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-        Cargando bandeja…
-      </div>
-    );
-  } else if (listQuery.isError) {
+  if (listQuery.isError && !listQuery.data) {
     center = (
       <div className="flex-1 flex items-center justify-center text-destructive text-sm px-4 text-center">
         {(listQuery.error as Error).message}
@@ -169,11 +184,20 @@ export default function InboxPage() {
         <ContextPanel conversation={selected} />
       </div>
     );
+  } else if (selectedId && (detailQuery.isLoading || detailQuery.isFetching)) {
+    center = (
+      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+        Cargando conversación…
+      </div>
+    );
   } else {
     center = (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        <p>{conversations.length ? "Selecciona una conversación" : "No hay conversaciones"}</p>
-      </div>
+      <InboxWorkspaceEmpty
+        user={user}
+        hasConversations={emptyListSnapshot.current.hasConversations}
+        tab={tab}
+        listCount={emptyListSnapshot.current.count}
+      />
     );
   }
 
@@ -199,6 +223,8 @@ export default function InboxPage() {
         channelFilter={channelFilter}
         onChannelFilterChange={setChannelFilter}
         showAllTab={showAllTab}
+        isInitialLoad={listInitialLoad}
+        isRefetching={listRefetching}
       />
       {center}
     </div>

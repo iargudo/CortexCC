@@ -1,4 +1,5 @@
 import { useSipStore } from "@/stores/sipStore";
+import { checkSoftphoneConfig } from "@/lib/softphoneDiagnostics";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -11,6 +12,10 @@ interface Props {
 
 export function SoftphoneConfig({ onClose, onSave }: Props) {
   const { config, setConfig } = useSipStore();
+  const configCheck = checkSoftphoneConfig(config);
+  const certUrl = config.server?.trim().startsWith("wss://")
+    ? config.server.trim().replace(/^wss:\/\//, "https://")
+    : "";
 
   return (
     <div className="space-y-3">
@@ -24,6 +29,10 @@ export function SoftphoneConfig({ onClose, onSave }: Props) {
         </Button>
       </div>
 
+      {!configCheck.canRegister && configCheck.issue && (
+        <p className="text-[10px] text-destructive leading-snug">{configCheck.issue}</p>
+      )}
+
       <div className="space-y-2.5">
         <div>
           <Label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
@@ -35,6 +44,19 @@ export function SoftphoneConfig({ onClose, onSave }: Props) {
             placeholder="wss://pbx.example.com:8089/ws"
             className="h-7 text-xs font-mono"
           />
+          {certUrl && (
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Si es <code>self-signed</code>, abre{" "}
+              <button
+                type="button"
+                className="underline hover:text-foreground"
+                onClick={() => window.open(certUrl, "_blank", "noopener,noreferrer")}
+              >
+                {certUrl}
+              </button>{" "}
+              y acepta el certificado; luego vuelve y conecta.
+            </p>
+          )}
         </div>
 
         <div>
@@ -103,7 +125,7 @@ export function SoftphoneConfig({ onClose, onSave }: Props) {
       <Button
         className="w-full h-8 text-xs"
         onClick={onSave}
-        disabled={!config.server || !config.extension || !config.realm}
+        disabled={!configCheck.canRegister}
       >
         Guardar y Conectar
       </Button>

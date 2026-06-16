@@ -1,4 +1,4 @@
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
 import { HttpError } from "../middleware/errorHandler.js";
 
 function weightedScore(c: { saludo: number; empatia: number; resolucion: number; cierre: number }) {
@@ -6,7 +6,7 @@ function weightedScore(c: { saludo: number; empatia: number; resolucion: number;
 }
 
 export async function listPending() {
-  return prisma.conversation.findMany({
+  return getPrisma().conversation.findMany({
     where: { status: "RESOLVED" },
     orderBy: { resolved_at: "desc" },
     take: 50,
@@ -19,7 +19,7 @@ export async function listPending() {
 }
 
 export async function listEvaluations() {
-  return prisma.qualityEvaluation.findMany({ orderBy: { created_at: "desc" }, take: 100 });
+  return getPrisma().qualityEvaluation.findMany({ orderBy: { created_at: "desc" }, take: 100 });
 }
 
 export async function createEvaluation(input: {
@@ -28,14 +28,14 @@ export async function createEvaluation(input: {
   comment: string;
   evaluatorId?: string;
 }) {
-  const conv = await prisma.conversation.findUnique({
+  const conv = await getPrisma().conversation.findUnique({
     where: { id: input.conversation_id },
     include: { contact: true, channel: true, assignments: { include: { user: true } } },
   });
   if (!conv) throw new HttpError(404, "Conversation not found");
   const agent = conv.assignments[0]?.user;
   const score = weightedScore(input.categories) * 10;
-  return prisma.qualityEvaluation.create({
+  return getPrisma().qualityEvaluation.create({
     data: {
       conversation_id: conv.id,
       evaluator_id: input.evaluatorId,

@@ -129,6 +129,7 @@ PRISMA_LOG_QUERIES=false
 PORT=3030
 API_PREFIX=/api
 CORS_ORIGIN=http://PUBLIC_IP:8080
+MASTER_DATABASE_URL=postgresql://USER:PASSWORD@RDS_HOST:5432/cortexcc_master
 DATABASE_URL=postgresql://USER:PASSWORD@RDS_HOST:5432/cortexcc
 REDIS_URL=redis://REDIS_HOST:6379/2
 QUEUE_CONCURRENCY=5
@@ -151,7 +152,10 @@ ENVEOF
 sed -i "s/PUBLIC_IP/$PUBLIC_IP/g" .env
 
 npx prisma generate
-npx prisma db push
+npx prisma generate --schema=prisma/master.schema.prisma
+SEED_LOCAL_TENANT=true npm run setup:master
+npm run migrate:all-tenants
+# Opcional (demo): npm run seed:tenant
 pm2 start npm --name cortexcc-backend -- start
 
 # Frontend
@@ -189,7 +193,18 @@ ssh -i "${KEY_NAME}.pem" ubuntu@"$PUBLIC_IP" "pm2 logs cortexcc-backend --lines 
 ssh -i "${KEY_NAME}.pem" ubuntu@"$PUBLIC_IP" "pm2 logs cortexcc-frontend --lines 100"
 ```
 
-## 9) Notas importantes
+## 9) Script automatizado (recomendado)
+
+```bash
+cp deploy/aws/.env.example deploy/aws/.env
+# Edita AMI_ID, GIT_URL, MASTER_DATABASE_URL, DATABASE_URL, REDIS_URL, secretos JWT, etc.
+# Deja REPLACE_PUBLIC_IP en URLs; el script lo sustituye al obtener la IP de la EC2.
+# Para demo con usuarios de prueba: RUN_PRISMA_SEED=true
+
+./deploy/aws/scripts/deploy-cortexcc-ec2.sh
+```
+
+## 10) Notas importantes
 
 - Este despliegue mantiene puertos:
   - backend `3030`

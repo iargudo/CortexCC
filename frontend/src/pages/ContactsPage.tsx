@@ -10,10 +10,20 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Plus, ExternalLink, MessageSquare, Upload, Download, Merge } from "lucide-react";
+import { Search, Plus, ExternalLink, MessageSquare, Upload, Download, Merge, Pencil, Trash2 } from "lucide-react";
 import { apiFetch, apiJson } from "@/lib/api";
 import { ContactDetailDrawer } from "@/components/contacts/ContactDetailDrawer";
 import { useAuthStore } from "@/stores/authStore";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function ContactsPage() {
   const qc = useQueryClient();
@@ -57,6 +67,12 @@ export default function ContactsPage() {
   const [newEmail, setNewEmail] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [newTags, setNewTags] = useState("");
+  const [editContact, setEditContact] = useState<Contact | null>(null);
+  const [deleteContact, setDeleteContact] = useState<Contact | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editTags, setEditTags] = useState("");
 
   const listQuery = useQuery({
     queryKey: ["contacts", debouncedSearch],
@@ -80,6 +96,73 @@ export default function ContactsPage() {
       setMergeOpen(false);
       setMergeSource("");
       setMergeTarget("");
+      void qc.invalidateQueries({ queryKey: ["contacts"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const openEditDialog = (c: Contact) => {
+    setDrawerOpen(false);
+    setEditContact(c);
+    setEditName(c.name ?? "");
+    setEditEmail(c.email ?? "");
+    setEditPhone(c.phone ?? c.phone_wa ?? "");
+    setEditTags((c.tags ?? []).join(", "));
+  };
+
+  const updateMut = useMutation({
+    mutationFn: () => {
+      if (!editContact) throw new Error("Sin contacto");
+      const phone = editPhone.trim() || null;
+      return apiJson<Contact>(`/contacts/${encodeURIComponent(editContact.id)}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: editName.trim(),
+          email: editEmail.trim() || null,
+          phone,
+          phone_wa: phone,
+        }),
+      }).then(async (updated) => {
+        const tags = editTags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
+        if (tags.join(",") !== (editContact.tags ?? []).join(",")) {
+          return apiJson<Contact>(`/contacts/${encodeURIComponent(editContact.id)}/tags`, {
+            method: "PUT",
+            body: JSON.stringify({ tags }),
+          });
+        }
+        return updated;
+      });
+    },
+    onSuccess: (updated) => {
+      toast.success("Contacto actualizado");
+      setEditContact(null);
+      if (drawerContact?.id === updated.id) {
+        setDrawerContact(updated);
+      }
+      void qc.invalidateQueries({ queryKey: ["contacts"] });
+      void qc.invalidateQueries({ queryKey: ["contacts", updated.id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiFetch(`/contacts/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || res.statusText);
+      }
+    },
+    onSuccess: (_data, id) => {
+      toast.success("Contacto eliminado");
+      setDeleteContact(null);
+      if (drawerContact?.id === id) {
+        setDrawerOpen(false);
+        setDrawerContact(null);
+      }
       void qc.invalidateQueries({ queryKey: ["contacts"] });
     },
     onError: (e: Error) => toast.error(e.message),
@@ -252,16 +335,6 @@ export default function ContactsPage() {
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7"
-                          title="Próximamente"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <MessageSquare size={12} />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
                           title="Ver detalle"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -269,6 +342,32 @@ export default function ContactsPage() {
                           }}
                         >
                           <ExternalLink size={12} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          title="Editar"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditDialog(c);
+                          }}
+                        >
+                          <Pencil size={12} />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive hover:text-destructive"
+                          title="Eliminar"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteContact(c);
+                          }}
+                        >
+                          <Trash2 size={12} />
                         </Button>
                       </div>
                     </td>
@@ -411,6 +510,88 @@ export default function ContactsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={Boolean(editContact)} onOpenChange={(open) => !open && setEditContact(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar contacto</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2 col-span-2">
+                <Label className="text-sm">Nombre *</Label>
+                <Input
+                  className="h-9 text-sm"
+                  placeholder="Nombre completo"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm">Email</Label>
+                <Input
+                  className="h-9 text-sm"
+                  type="email"
+                  placeholder="email@ejemplo.com"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-sm">Teléfono</Label>
+                <Input
+                  className="h-9 text-sm"
+                  placeholder="+593..."
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm">Tags</Label>
+              <Input
+                className="h-9 text-sm"
+                placeholder="VIP, Cobranza (separar por coma)"
+                value={editTags}
+                onChange={(e) => setEditTags(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setEditContact(null)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={!editName.trim() || updateMut.isPending}
+              onClick={() => updateMut.mutate()}
+            >
+              Guardar cambios
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={Boolean(deleteContact)} onOpenChange={(open) => !open && setDeleteContact(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar contacto?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará permanentemente a &quot;{deleteContact?.name || "Sin nombre"}&quot;. Las conversaciones
+              históricas pueden quedar sin contacto asociado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => deleteContact && deleteMut.mutate(deleteContact.id)}
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Dialog open={newContactOpen} onOpenChange={setNewContactOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -479,6 +660,9 @@ export default function ContactsPage() {
               }, 280);
             }
           }}
+          onEdit={(c) => openEditDialog(c)}
+          onDelete={(c) => setDeleteContact(c)}
+          onUpdated={(c) => setDrawerContact(c)}
         />
       )}
     </div>

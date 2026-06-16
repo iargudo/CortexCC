@@ -533,12 +533,15 @@ interface EmailTemplate {
 - Validación: contraseña ≥ 4 caracteres
 - El rol se deduce del email: contiene "admin" → admin, "super" → supervisor, default → agent
 
-**Lo que debe implementar el backend:**
-- Autenticación real (JWT o session-based)
-- Endpoint: `POST /auth/login` → `{ email, password }` → `{ token, user }`
-- Endpoint: `POST /auth/logout`
-- Validación de credenciales contra DB
-- Refresh tokens
+**Implementación actual (multi-tenant):**
+- El tenant se resuelve **antes** del login (`TenantBootstrap`): por hostname en prod, `VITE_TENANT_KEY` en localhost, o `custom_domain` en Master si accedes por IP LAN.
+- **LAN + softphone:** usar `https://<IP>:8080` (Vite dev con TLS); ver `docs/05-telefonia-asterisk-softphone.md`.
+- Todas las peticiones API llevan header `X-Tenant-Key`.
+- Endpoint: `POST /auth/login` → `{ email, password }` + `X-Tenant-Key` → `{ token, refreshToken, user, tenantKey, tenantName }`
+- Endpoint: `POST /auth/logout`, `POST /auth/refresh` (refresh también requiere `X-Tenant-Key`)
+- Socket.IO: `auth: { token, tenantKey }`
+- Variables dev: `VITE_TENANT_KEY`, `VITE_TENANT_NAME` (no usar en build de producción)
+- Ver [docs/04-frontend-modulos-flujos.md](../docs/04-frontend-modulos-flujos.md) y [docs/ESTANDAR_ARQUITECTURA_MULTITENANT.md](../docs/ESTANDAR_ARQUITECTURA_MULTITENANT.md)
 
 ### 3.2 Modelo de Usuario Autenticado
 

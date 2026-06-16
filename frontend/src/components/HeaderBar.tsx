@@ -1,4 +1,4 @@
-import { Search, Bell, Phone, LogOut, User, ChevronDown, Loader2, MessageSquare } from "lucide-react";
+import { Search, Bell, Phone, PhoneOff, PhoneIncoming, LogOut, User, ChevronDown, Loader2, MessageSquare } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,10 +8,13 @@ import { cn } from "@/lib/utils";
 import { AgentStatusDot } from "@/components/StatusBadge";
 import { toast } from "sonner";
 import { useAuthStore } from "@/stores/authStore";
+import { useTenantStore } from "@/stores/tenantStore";
 import { useNavigate } from "react-router-dom";
 import type { AgentStatus, Contact, Conversation } from "@/data/mock";
 import { SoftphoneWidget } from "@/components/softphone/SoftphoneWidget";
+import { useSipPhoneContext } from "@/providers/sipPhoneContext";
 import { useSipStore } from "@/stores/sipStore";
+import { getSoftphoneStatusMessage } from "@/lib/softphoneDiagnostics";
 import { apiJson } from "@/lib/api";
 import { ChannelBadge } from "@/components/ChannelIcon";
 import { useBellNotificationsStore } from "@/stores/bellNotificationsStore";
@@ -32,7 +35,16 @@ export function HeaderBar() {
   const [searchInput, setSearchInput] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
   const { user, setStatus, logout, isAuthenticated } = useAuthStore();
-  const { registrationState, currentCall } = useSipStore();
+  const tenantName = useTenantStore((s) => s.tenantName);
+  const { registrationState, currentCall, openSoftphoneRef, answer, reject } = useSipPhoneContext();
+  const sipConfig = useSipStore((s) => s.config);
+  const sipExtension = sipConfig.extension;
+  const registrationError = useSipStore((s) => s.registrationError);
+  const softphoneStatusMessage = getSoftphoneStatusMessage({
+    config: sipConfig,
+    registrationState,
+    registrationError,
+  });
   const navigate = useNavigate();
   const notifRef = useRef<HTMLDivElement>(null);
   const statusRef = useRef<HTMLDivElement>(null);
@@ -58,6 +70,15 @@ export function HeaderBar() {
   const markRead = useBellNotificationsStore((s) => s.markRead);
   const unreadCount = notifications.filter((n) => !n.read).length;
   const hasActiveCall = !!currentCall && currentCall.state !== "ended";
+  const inboundRinging =
+    currentCall?.direction === "inbound" && currentCall.state === "ringing";
+
+  useEffect(() => {
+    openSoftphoneRef.current = () => setSoftphoneOpen(true);
+    return () => {
+      openSoftphoneRef.current = null;
+    };
+  }, [openSoftphoneRef]);
 
   useEffect(() => {
     if (currentCall?.direction === "inbound" && currentCall.state === "ringing") {
@@ -65,17 +86,22 @@ export function HeaderBar() {
     }
   }, [currentCall]);
 
-  // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
       if (statusRef.current && !statusRef.current.contains(e.target as Node)) setStatusOpen(false);
-      if (softphoneRef.current && !softphoneRef.current.contains(e.target as Node)) setSoftphoneOpen(false);
+      if (
+        softphoneRef.current &&
+        !softphoneRef.current.contains(e.target as Node) &&
+        !inboundRinging
+      ) {
+        setSoftphoneOpen(false);
+      }
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) setSearchOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  }, [inboundRinging]);
 
   return (
     <header className="h-14 border-b bg-card flex items-center px-3 gap-3 shrink-0">
@@ -162,6 +188,11 @@ export function HeaderBar() {
       </div>
 
       <div className="flex items-center gap-2 ml-auto">
+          {tenantName && (
+            <span className="hidden md:inline text-xs text-muted-foreground max-w-[160px] truncate" title={tenantName}>
+              {tenantName}
+            </span>
+          )}
         {/* Notifications */}
         <div className="relative" ref={notifRef}>
           <Button variant="ghost" size="icon" className="relative h-8 w-8" onClick={() => setNotifOpen(!notifOpen)}>
@@ -226,16 +257,56 @@ export function HeaderBar() {
         </div>
 
         {/* Softphone */}
-        <div className="relative" ref={softphoneRef}>
+        <div className="relative flex items-center gap-1.5" ref={softphoneRef}>
+          {inboundRinging && (
+            <div className="hidden sm:flex items-center gap-1.5 mr-1 px-2 py-1 rounded-full bg-primary/10 border border-primary/20 animate-pulse">
+              <PhoneIncoming size={12} className="text-primary shrink-0" />
+              <span className="text-[10px] font-medium text-primary max-w-[120px] truncate">
+                {currentCall.remoteDisplayName || currentCall.remoteUri}
+              </span>
+              <Button
+                size="icon"
+                className="h-6 w-6 rounded-full bg-emerald-500 hover:bg-emerald-600"
+                title="Contestar"
+                onClick={() => void answer()}
+              >
+                <Phone size={11} className="text-white" />
+              </Button>
+              <Button
+                size="icon"
+                variant="destructive"
+                className="h-6 w-6 rounded-full"
+                title="Rechazar"
+                onClick={() => void reject()}
+              >
+                <PhoneOff size={11} />
+              </Button>
+            </div>
+          )}
+          {registrationState === "registered" && sipExtension && (
+            <span className="text-[10px] font-mono text-emerald-600 hidden sm:inline" title="Extensión SIP">
+              {sipExtension}
+            </span>
+          )}
           <Button
             variant={hasActiveCall ? "default" : registrationState === "registered" ? "ghost" : "ghost"}
             size="icon"
             className={cn("h-8 w-8 relative", hasActiveCall && "animate-pulse-dot")}
             onClick={() => setSoftphoneOpen(!softphoneOpen)}
+            data-testid="header-softphone-toggle"
+            title={
+              softphoneStatusMessage
+                ?? (registrationState === "registered" && sipExtension
+                  ? `Softphone · Ext. ${sipExtension}`
+                  : "Softphone")
+            }
           >
-            <Phone size={16} />
+            <Phone size={16} className={registrationState === "error" ? "text-destructive" : undefined} />
             {registrationState === "registered" && !hasActiveCall && (
               <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500" />
+            )}
+            {registrationState === "error" && !hasActiveCall && (
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-destructive" />
             )}
             {hasActiveCall && (
               <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-destructive animate-pulse" />

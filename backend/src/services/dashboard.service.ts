@@ -1,4 +1,4 @@
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
 
 function startOfToday() {
   const d = new Date();
@@ -19,16 +19,16 @@ export async function getDashboardStats() {
     convs24h,
     aiEscalations,
   ] = await Promise.all([
-    prisma.user.count(),
-    prisma.user.count({ where: { status: { in: ["ONLINE", "BUSY"] } } }),
-    prisma.conversation.count({ where: { status: "WAITING" } }),
-    prisma.conversation.count({ where: { status: { in: ["ACTIVE", "ASSIGNED", "ON_HOLD"] } } }),
-    prisma.conversation.count({ where: { status: "RESOLVED", resolved_at: { gte: today } } }),
-    prisma.conversation.findMany({
+    getPrisma().user.count(),
+    getPrisma().user.count({ where: { status: { in: ["ONLINE", "BUSY"] } } }),
+    getPrisma().conversation.count({ where: { status: "WAITING" } }),
+    getPrisma().conversation.count({ where: { status: { in: ["ACTIVE", "ASSIGNED", "ON_HOLD"] } } }),
+    getPrisma().conversation.count({ where: { status: "RESOLVED", resolved_at: { gte: today } } }),
+    getPrisma().conversation.findMany({
       where: { created_at: { gte: since24h } },
       select: { channel_id: true, created_at: true },
     }),
-    prisma.conversation.count({ where: { source: { contains: "escalation" } } }),
+    getPrisma().conversation.count({ where: { source: { contains: "escalation" } } }),
   ]);
 
   const byHour: Record<string, number> = {};
@@ -43,7 +43,7 @@ export async function getDashboardStats() {
   for (const c of convs24h) {
     chAgg[c.channel_id] = (chAgg[c.channel_id] ?? 0) + 1;
   }
-  const chRows = await prisma.channel.findMany();
+  const chRows = await getPrisma().channel.findMany();
   const denom = convs24h.length || 1;
   const channel_breakdown = chRows.map((ch) => {
     const count = chAgg[ch.id] ?? 0;

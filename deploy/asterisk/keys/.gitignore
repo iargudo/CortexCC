@@ -1,0 +1,8 @@
+# Do not commit TLS private material
+*.key
+*.pem
+*.crt
+*.csr
+*.p12
+*.pfx
+

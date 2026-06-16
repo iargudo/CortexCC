@@ -1,9 +1,11 @@
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
+import { userRoom } from "../lib/socketRooms.js";
+import { getCurrentTenantKey } from "../lib/tenantContext.js";
 import { createAdapterForType } from "../channels/registry.js";
 import type { Server } from "socket.io";
 
 export async function deliverOutboundMessage(messageId: string, io: Server | null): Promise<void> {
-  const msg = await prisma.message.findUnique({
+  const msg = await getPrisma().message.findUnique({
     where: { id: messageId },
     include: {
       attachments: true,
@@ -36,7 +38,7 @@ export async function deliverOutboundMessage(messageId: string, io: Server | nul
     }
   );
 
-  await prisma.message.update({
+  await getPrisma().message.update({
     where: { id: messageId },
     data: {
       delivery_status: result.ok ? "delivered" : "failed",
@@ -51,12 +53,13 @@ export async function deliverOutboundMessage(messageId: string, io: Server | nul
     delivery_status: result.ok ? "delivered" : "failed",
   });
 
-  const assignments = await prisma.conversationAssignment.findMany({
+  const assignments = await getPrisma().conversationAssignment.findMany({
     where: { conversation_id: msg.conversation_id, ended_at: null },
     select: { user_id: true },
   });
+  const tenantKey = getCurrentTenantKey();
   for (const a of assignments) {
-    io?.to(`user:${a.user_id}`).emit("message:delivery_update", {
+    io?.to(userRoom(tenantKey, a.user_id)).emit("message:delivery_update", {
       message_id: messageId,
       conversation_id: msg.conversation_id,
       delivery_status: result.ok ? "delivered" : "failed",

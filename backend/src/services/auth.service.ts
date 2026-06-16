@@ -1,5 +1,6 @@
 import type { AgentStatus, Prisma } from "@prisma/client";
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
+import { getCurrentTenantKey, getCurrentTenantName } from "../lib/tenantContext.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
 import { hashRefreshToken, signAccessToken, signRefreshToken, verifyAccessToken } from "../lib/jwt.js";
 import type { PermissionsMap } from "../lib/permissions.js";
@@ -47,7 +48,15 @@ export function toAuthUserResponse(user: {
   };
 }
 
+function tenantAuthFields() {
+  return {
+    tenantKey: getCurrentTenantKey(),
+    tenantName: getCurrentTenantName(),
+  };
+}
+
 export async function loginWithPassword(email: string, password: string) {
+  const prisma = getPrisma();
   const user = await prisma.user.findUnique({
     where: { email: email.toLowerCase() },
     include: { roles: { include: { role: true } } },
@@ -56,7 +65,8 @@ export async function loginWithPassword(email: string, password: string) {
   const ok = await verifyPassword(password, user.password_hash);
   if (!ok) throw new HttpError(401, "Invalid credentials");
 
-  const accessToken = signAccessToken({ sub: user.id, email: user.email });
+  const tenantKey = getCurrentTenantKey();
+  const accessToken = signAccessToken({ sub: user.id, email: user.email, tenantKey });
   const refreshPlain = signRefreshToken();
   const refreshHash = hashRefreshToken(refreshPlain);
   const expires = new Date();
@@ -74,10 +84,12 @@ export async function loginWithPassword(email: string, password: string) {
     token: accessToken,
     refreshToken: refreshPlain,
     user: toAuthUserResponse(user),
+    ...tenantAuthFields(),
   };
 }
 
 export async function refreshSession(refreshToken: string) {
+  const prisma = getPrisma();
   const hash = hashRefreshToken(refreshToken);
   const row = await prisma.refreshToken.findUnique({
     where: { token_hash: hash },
@@ -86,23 +98,25 @@ export async function refreshSession(refreshToken: string) {
   if (!row || row.expires_at < new Date()) {
     throw new HttpError(401, "Invalid refresh token");
   }
-  const accessToken = signAccessToken({ sub: row.user_id, email: row.user.email });
-  return { token: accessToken, user: toAuthUserResponse(row.user) };
+  const tenantKey = getCurrentTenantKey();
+  const accessToken = signAccessToken({ sub: row.user_id, email: row.user.email, tenantKey });
+  return { token: accessToken, user: toAuthUserResponse(row.user), ...tenantAuthFields() };
 }
 
 export async function revokeRefreshToken(refreshToken: string) {
   const hash = hashRefreshToken(refreshToken);
-  await prisma.refreshToken.deleteMany({ where: { token_hash: hash } });
+  await getPrisma().refreshToken.deleteMany({ where: { token_hash: hash } });
 }
 
 export async function logoutAll(userId: string) {
-  await prisma.refreshToken.deleteMany({ where: { user_id: userId } });
+  await getPrisma().refreshToken.deleteMany({ where: { user_id: userId } });
 }
 
 export async function changeProfile(
   userId: string,
   data: { name?: string; email?: string; max_concurrent?: number }
 ) {
+  const prisma = getPrisma();
   let first_name: string | undefined;
   let last_name: string | undefined;
   if (data.name) {
@@ -124,7 +138,7 @@ export async function changeProfile(
 }
 
 export async function setAgentStatus(userId: string, status: string) {
-  const user = await prisma.user.update({
+  const user = await getPrisma().user.update({
     where: { id: userId },
     data: { status: status as never, status_since: new Date() },
     include: { roles: { include: { role: true } } },
@@ -146,6 +160,7 @@ export type AdminUpdateUserInput = {
 };
 
 export async function adminUpdateUser(userId: string, body: AdminUpdateUserInput) {
+  const prisma = getPrisma();
   const existing = await prisma.user.findUnique({ where: { id: userId } });
   if (!existing) throw new HttpError(404, "User not found");
 
@@ -219,6 +234,7 @@ export async function registerUser(input: {
   last_name: string;
   roleNames?: string[];
 }) {
+  const prisma = getPrisma();
   const exists = await prisma.user.findUnique({ where: { email: input.email.toLowerCase() } });
   if (exists) throw new HttpError(409, "Email already registered");
   const password_hash = await hashPassword(input.password);
@@ -244,6 +260,7 @@ export function parseBearerPayload(token: string) {
 }
 
 export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
+  const prisma = getPrisma();
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new HttpError(404, "User not found");
   const ok = await verifyPassword(currentPassword, user.password_hash);

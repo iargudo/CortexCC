@@ -18,9 +18,9 @@ const contentTypeToApi = (ct: string): string => {
       return "SYSTEM_EVENT";
     case "IMAGE":
       return "IMAGE";
-    case "AUDIO":
-      return "AUDIO";
     case "VOICE_CALL":
+      return "VOICE_CALL";
+    case "AUDIO":
       return "AUDIO";
     default:
       return "TEXT";
@@ -38,6 +38,9 @@ export function mapMessage(m: Message & { attachments?: Attachment[]; sender?: {
         : undefined,
     content: m.content,
     content_type: contentTypeToApi(m.content_type),
+    metadata: (m.metadata as Record<string, unknown> | null) ?? undefined,
+    call_duration_seconds: m.call_duration_seconds ?? undefined,
+    call_recording_url: m.call_recording_url ?? undefined,
     is_internal: m.is_internal,
     delivery_status: m.delivery_status,
     created_at: m.created_at.toISOString(),

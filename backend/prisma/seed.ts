@@ -2,13 +2,53 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { defaultRolePermissions } from "../src/lib/permissions.js";
 
-const prisma = new PrismaClient();
+function buildTenantDatabaseUrl(): string {
+  const host = process.env.TENANT_DB_HOST?.trim();
+  const port = process.env.TENANT_DB_PORT?.trim() ?? "5432";
+  const user = process.env.TENANT_DB_USER?.trim();
+  const password = process.env.TENANT_DB_PASSWORD?.trim();
+  const name = process.env.TENANT_DB_NAME?.trim();
+
+  if (host && user && password && name) {
+    return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${name}`;
+  }
+
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (databaseUrl) return databaseUrl;
+
+  throw new Error("Set TENANT_DB_* or DATABASE_URL for seed:tenant");
+}
+
+const prisma = new PrismaClient({
+  datasources: { db: { url: buildTenantDatabaseUrl() } },
+});
 
 async function main() {
   await prisma.organizationSettings.upsert({
     where: { id: "default" },
-    create: { id: "default", company_name: "Cortex Contact", timezone: "America/Guayaquil", language: "es" },
-    update: {},
+    create: {
+      id: "default",
+      company_name: "Cortex Contact",
+      timezone: "America/Guayaquil",
+      language: "es",
+      sip_server: "wss://localhost:8089/ws",
+      sip_realm: "localhost",
+      pbx_host: "localhost",
+      pbx_wss_port: 8089,
+      pbx_ari_port: 8074,
+      sip_display_name: "Cortex Agent",
+      sip_extension_range_start: 7001,
+      sip_extension_range_end: 7099,
+    },
+    update: {
+      sip_server: "wss://localhost:8089/ws",
+      sip_realm: "localhost",
+      pbx_host: "localhost",
+      pbx_wss_port: 8089,
+      pbx_ari_port: 8074,
+      sip_extension_range_start: 7001,
+      sip_extension_range_end: 7099,
+    },
   });
 
   const roles = await Promise.all(
@@ -84,6 +124,24 @@ async function main() {
   });
 
   const channelTypes = ["WHATSAPP", "EMAIL", "TEAMS", "VOICE", "WEBCHAT"] as const;
+  const voiceConfig = {
+    provider: "asterisk_ari",
+    ariBaseUrl: "http://localhost:8074",
+    ariApp: "cortexcc",
+    ariUsername: "cortexcc",
+    ariPassword: "Admin123!",
+    callerIdField: "channel.caller.number",
+    dialedNumberField: "channel.dialplan.exten",
+    extensionField: "endpoint",
+    pollFallbackSec: 15,
+    outboundTrunkEndpoint: "PJSIP/carrier-trunk",
+    outboundContext: "outbound-trunk",
+    defaultCallerId: "CortexCC",
+    agentEndpointTemplate: "PJSIP/{extension}",
+    ringTimeoutSec: 30,
+    mohClass: "default",
+    recordingEnabled: false,
+  };
   for (const t of channelTypes) {
     await prisma.channel.upsert({
       where: { id: `seed-channel-${t}` },
@@ -92,9 +150,9 @@ async function main() {
         name: `${t} channel`,
         type: t,
         status: "active",
-        config: {},
+        config: t === "VOICE" ? voiceConfig : {},
       },
-      update: {},
+      update: t === "VOICE" ? { config: voiceConfig, status: "active" } : {},
     });
   }
 
@@ -103,6 +161,14 @@ async function main() {
     await prisma.queueChannel.upsert({
       where: { queue_id_channel_id: { queue_id: queue.id, channel_id: wa.id } },
       create: { queue_id: queue.id, channel_id: wa.id },
+      update: {},
+    });
+  }
+  const voice = await prisma.channel.findFirst({ where: { type: "VOICE" } });
+  if (voice) {
+    await prisma.queueChannel.upsert({
+      where: { queue_id_channel_id: { queue_id: queue.id, channel_id: voice.id } },
+      create: { queue_id: queue.id, channel_id: voice.id },
       update: {},
     });
   }
@@ -144,6 +210,10 @@ async function main() {
       where: { team_id_user_id: { team_id: team.id, user_id: agentUser.id } },
       create: { team_id: team.id, user_id: agentUser.id, role: "member" },
       update: {},
+    });
+    await prisma.user.update({
+      where: { id: agentUser.id },
+      data: { sip_extension: "7001", sip_password: "7001pass" },
     });
   }
 

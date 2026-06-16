@@ -6,6 +6,7 @@ import type { QuickReply } from "@/data/mock";
 import { apiFetch, apiJson } from "@/lib/api";
 import { TransferDialog } from "@/components/inbox/TransferDialog";
 import { ResolveDialog } from "@/components/inbox/ResolveDialog";
+import { VoiceCallBar } from "@/components/inbox/VoiceCallBar";
 import { EmailThreadView } from "@/components/inbox/EmailThreadView";
 import { EmailTemplateSelector, type EmailTemplate } from "@/components/email/EmailTemplates";
 import { Button } from "@/components/ui/button";
@@ -299,6 +300,7 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
 
   return (
     <div className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-hidden">
+      <VoiceCallBar conversation={conversation} />
       {/* Header */}
       <div className="h-14 border-b px-4 flex items-center gap-3 bg-card shrink-0 sticky top-0 z-20">
         <div className="min-w-0">
@@ -444,6 +446,18 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
                         Inicio de atención humana
                       </span>
                       <div className="h-px flex-1 bg-border" />
+                    </div>
+                  </div>
+                );
+              }
+              if (msg.content_type === "VOICE_CALL" || msg.content.startsWith("[Llamada")) {
+                const meta = msg.metadata as { caller_number?: string; state?: string; duration_seconds?: number } | undefined;
+                return (
+                  <div key={msg.id} className="flex justify-center">
+                    <div className="text-[11px] text-muted-foreground bg-surface-system-event px-3 py-2 rounded-lg text-center">
+                      <div>{msg.content}</div>
+                      {meta?.caller_number && <div className="mt-1">Desde: {meta.caller_number}</div>}
+                      {meta?.state && <div className="capitalize">Estado: {meta.state}</div>}
                     </div>
                   </div>
                 );

@@ -1,5 +1,6 @@
 import { Prisma, type Channel } from "@prisma/client";
-import { prisma } from "../lib/prisma.js";
+import jwt, { type SignOptions } from "jsonwebtoken";
+import { getPrisma } from "../lib/prisma.js";
 import { HttpError } from "../middleware/errorHandler.js";
 import { mapChannelType } from "../lib/channelTypes.js";
 import { canonicalPhone, phoneCandidates } from "../lib/phone.js";
@@ -8,6 +9,7 @@ import { createConversationFromEscalation } from "./conversation.service.js";
 type IntegrationUiStatus = "connected" | "warning" | "disconnected";
 type IntegrationAppModeInput = "SNAPSHOT" | "EMBED" | "ACTIONS";
 type IntegrationAppViewMode = "INLINE" | "MODAL" | "EXTERNAL_TAB";
+type IntegrationAuthTypeInput = "NONE" | "API_KEY" | "OAUTH2" | "JWT";
 
 function channelUiStatus(ch: Channel | undefined): IntegrationUiStatus {
   if (!ch) return "disconnected";
@@ -25,18 +27,18 @@ async function upsertContact(input: {
   const variants = phoneCandidates(phone);
   const existing =
     (variants.length > 0 &&
-      (await prisma.contact.findFirst({
+      (await getPrisma().contact.findFirst({
         where: {
           OR: [{ phone: { in: variants } }, { phone_wa: { in: variants } }],
         },
       }))) ||
     (input.external_id &&
-      (await prisma.contact.findFirst({
+      (await getPrisma().contact.findFirst({
         where: { external_id: input.external_id, source_system: input.source_system },
       })));
 
   if (existing) {
-    return prisma.contact.update({
+    return getPrisma().contact.update({
       where: { id: existing.id },
       data: {
         name: input.name ?? existing.name,
@@ -48,7 +50,7 @@ async function upsertContact(input: {
     });
   }
 
-  return prisma.contact.create({
+  return getPrisma().contact.create({
     data: {
       name: input.name,
       phone,
@@ -61,7 +63,7 @@ async function upsertContact(input: {
 
 async function resolveChannel(channelType: string) {
   const type = mapChannelType(channelType);
-  const ch = await prisma.channel.findFirst({ where: { type } });
+  const ch = await getPrisma().channel.findFirst({ where: { type } });
   if (!ch) throw new HttpError(503, `No channel configured for ${type}`);
   return ch;
 }
@@ -101,6 +103,44 @@ function parseViewMode(value: unknown): IntegrationAppViewMode {
   if (normalized === "MODAL") return "MODAL";
   if (normalized === "EXTERNAL_TAB") return "EXTERNAL_TAB";
   return "INLINE";
+}
+
+function parseAuthType(value: unknown): IntegrationAuthTypeInput {
+  const normalized = normalizeMatchToken(value).toUpperCase();
+  if (normalized === "API_KEY") return "API_KEY";
+  if (normalized === "OAUTH2") return "OAUTH2";
+  if (normalized === "JWT") return "JWT";
+  return "NONE";
+}
+
+function getCredentialValue(credentialsRef: string | null | undefined, cfg: Record<string, unknown>): string | null {
+  const fromConfig = stringOrNull(cfg.auth_credential_value);
+  if (fromConfig) return fromConfig;
+  const fromRef = stringOrNull(credentialsRef);
+  if (!fromRef) return null;
+  if (fromRef.toLowerCase().startsWith("env:")) return null;
+  return fromRef;
+}
+
+function normalizeCredentialRefOrThrow(value: unknown): string | null {
+  const normalized = stringOrNull(value);
+  if (!normalized) return null;
+  if (normalized.toLowerCase().startsWith("env:")) {
+    throw new HttpError(
+      400,
+      "credentials_ref must be a DB-stored value (env: prefix is not allowed)"
+    );
+  }
+  return normalized;
+}
+
+function appendQueryParams(rawUrl: string, params: Record<string, string | null | undefined>): string {
+  const url = new URL(rawUrl);
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null || value === "") continue;
+    url.searchParams.set(key, value);
+  }
+  return url.toString();
 }
 
 function getByPath(root: Record<string, unknown>, path: string): unknown {
@@ -167,7 +207,7 @@ export async function getIntegrationsUiSummary(): Promise<{
     endpoint: string;
   }[];
 }> {
-  const channels = await prisma.channel.findMany();
+  const channels = await getPrisma().channel.findMany();
   const pick = (type: Channel["type"]) => channels.find((c) => c.type === type);
   const wa = pick("WHATSAPP");
   const teams = pick("TEAMS");
@@ -188,15 +228,29 @@ export async function getIntegrationsUiSummary(): Promise<{
       stats: {},
       endpoint: (voiceCh?.config as { sip_endpoint?: string })?.sip_endpoint ?? "wss://pbx.empresa.com/ws",
     },
-    {
-      id: "ultramsg",
-      name: "UltraMsg (WhatsApp)",
-      description: "Proveedor WhatsApp Business API",
-      status: channelUiStatus(wa),
-      lastSync: last(wa),
-      stats: {},
-      endpoint: "https://api.ultramsg.com",
-    },
+    ...(wa
+      ? [
+          {
+            id: `whatsapp-${String((wa.config as { provider?: string })?.provider ?? "ultramsg")}`,
+            name: (() => {
+              const provider = String((wa.config as { provider?: string })?.provider ?? "ultramsg");
+              if (provider === "twilio") return "Twilio (WhatsApp)";
+              if (provider === "360dialog") return "360Dialog (WhatsApp)";
+              return "UltraMsg (WhatsApp)";
+            })(),
+            description: "Proveedor WhatsApp Business API",
+            status: channelUiStatus(wa),
+            lastSync: last(wa),
+            stats: {},
+            endpoint: (() => {
+              const cfg = (wa.config ?? {}) as { provider?: string; baseUrl?: string; apiBaseUrl?: string };
+              if (cfg.provider === "twilio") return cfg.apiBaseUrl ?? "https://api.twilio.com";
+              if (cfg.provider === "360dialog") return cfg.baseUrl ?? "https://waba-v2.360dialog.io";
+              return cfg.baseUrl ?? "https://api.ultramsg.com";
+            })(),
+          },
+        ]
+      : []),
     {
       id: "graph",
       name: "Microsoft Graph (Teams)",
@@ -214,7 +268,7 @@ export async function getIntegrationsUiSummary(): Promise<{
 }
 
 export async function listIntegrationApps() {
-  const rows = await prisma.integrationApp.findMany({ orderBy: [{ name: "asc" }] });
+  const rows = await getPrisma().integrationApp.findMany({ orderBy: [{ name: "asc" }] });
   return rows.map((r) => ({
     id: r.id,
     key: r.key,
@@ -246,7 +300,8 @@ export async function createIntegrationApp(input: {
   if (!input.name?.trim()) throw new HttpError(400, "name required");
   const mode = enumOrThrow(input.mode, ["SNAPSHOT", "EMBED", "ACTIONS"] as const, "mode");
   const authType = enumOrThrow(input.auth_type, ["NONE", "API_KEY", "OAUTH2", "JWT"] as const, "auth_type");
-  return prisma.integrationApp.create({
+  const credentialsRef = normalizeCredentialRefOrThrow(input.credentials_ref);
+  return getPrisma().integrationApp.create({
     data: {
       key: input.key.trim().toLowerCase(),
       name: input.name.trim(),
@@ -254,7 +309,7 @@ export async function createIntegrationApp(input: {
       mode,
       auth_type: authType,
       base_url: stringOrNull(input.base_url),
-      credentials_ref: stringOrNull(input.credentials_ref),
+      credentials_ref: credentialsRef,
       config: asJson(input.config),
       is_active: input.is_active ?? true,
     },
@@ -275,7 +330,7 @@ export async function updateIntegrationApp(
     is_active?: boolean;
   }
 ) {
-  const existing = await prisma.integrationApp.findUnique({ where: { id } });
+  const existing = await getPrisma().integrationApp.findUnique({ where: { id } });
   if (!existing) throw new HttpError(404, "Integration app not found");
   const mode = input.mode
     ? enumOrThrow(input.mode, ["SNAPSHOT", "EMBED", "ACTIONS"] as const, "mode")
@@ -283,7 +338,11 @@ export async function updateIntegrationApp(
   const authType = input.auth_type
     ? enumOrThrow(input.auth_type, ["NONE", "API_KEY", "OAUTH2", "JWT"] as const, "auth_type")
     : existing.auth_type;
-  return prisma.integrationApp.update({
+  const credentialsRef =
+    input.credentials_ref !== undefined
+      ? normalizeCredentialRefOrThrow(input.credentials_ref)
+      : undefined;
+  return getPrisma().integrationApp.update({
     where: { id },
     data: {
       ...(input.key !== undefined ? { key: input.key.trim().toLowerCase() } : {}),
@@ -292,7 +351,7 @@ export async function updateIntegrationApp(
       mode,
       auth_type: authType,
       ...(input.base_url !== undefined ? { base_url: stringOrNull(input.base_url) } : {}),
-      ...(input.credentials_ref !== undefined ? { credentials_ref: stringOrNull(input.credentials_ref) } : {}),
+      ...(input.credentials_ref !== undefined ? { credentials_ref: credentialsRef } : {}),
       ...(input.config !== undefined ? { config: asJson(input.config) } : {}),
       ...(input.is_active !== undefined ? { is_active: Boolean(input.is_active) } : {}),
     },
@@ -300,12 +359,12 @@ export async function updateIntegrationApp(
 }
 
 export async function deleteIntegrationApp(id: string) {
-  await prisma.integrationApp.delete({ where: { id } });
+  await getPrisma().integrationApp.delete({ where: { id } });
   return { ok: true };
 }
 
 export async function listIntegrationBindings() {
-  const rows = await prisma.integrationAppBinding.findMany({
+  const rows = await getPrisma().integrationAppBinding.findMany({
     include: { app: true },
     orderBy: [{ sort_order: "asc" }, { created_at: "asc" }],
   });
@@ -333,10 +392,10 @@ export async function createIntegrationBinding(input: {
   rules?: unknown;
 }) {
   if (!input.app_id?.trim()) throw new HttpError(400, "app_id required");
-  const app = await prisma.integrationApp.findUnique({ where: { id: input.app_id } });
+  const app = await getPrisma().integrationApp.findUnique({ where: { id: input.app_id } });
   if (!app) throw new HttpError(404, "Integration app not found");
   const scopeType = enumOrThrow(input.scope_type, ["GLOBAL", "CHANNEL", "QUEUE", "ROLE"] as const, "scope_type");
-  return prisma.integrationAppBinding.create({
+  return getPrisma().integrationAppBinding.create({
     data: {
       app: { connect: { id: input.app_id } },
       scope_type: scopeType,
@@ -361,16 +420,16 @@ export async function updateIntegrationBinding(
     rules?: unknown;
   }
 ) {
-  const existing = await prisma.integrationAppBinding.findUnique({ where: { id } });
+  const existing = await getPrisma().integrationAppBinding.findUnique({ where: { id } });
   if (!existing) throw new HttpError(404, "Integration binding not found");
   const scopeType = input.scope_type
     ? enumOrThrow(input.scope_type, ["GLOBAL", "CHANNEL", "QUEUE", "ROLE"] as const, "scope_type")
     : existing.scope_type;
   if (input.app_id) {
-    const app = await prisma.integrationApp.findUnique({ where: { id: input.app_id } });
+    const app = await getPrisma().integrationApp.findUnique({ where: { id: input.app_id } });
     if (!app) throw new HttpError(404, "Integration app not found");
   }
-  return prisma.integrationAppBinding.update({
+  return getPrisma().integrationAppBinding.update({
     where: { id },
     data: {
       ...(input.app_id !== undefined ? { app: { connect: { id: input.app_id } } } : {}),
@@ -385,7 +444,7 @@ export async function updateIntegrationBinding(
 }
 
 export async function deleteIntegrationBinding(id: string) {
-  await prisma.integrationAppBinding.delete({ where: { id } });
+  await getPrisma().integrationAppBinding.delete({ where: { id } });
   return { ok: true };
 }
 
@@ -480,7 +539,7 @@ export async function bootstrapRealWebExamples() {
   ];
 
   for (const ex of examples) {
-    const app = await prisma.integrationApp.upsert({
+    const app = await getPrisma().integrationApp.upsert({
       where: { key: ex.key },
       create: {
         key: ex.key,
@@ -503,7 +562,7 @@ export async function bootstrapRealWebExamples() {
       },
     });
 
-    await prisma.integrationAppBinding.upsert({
+    await getPrisma().integrationAppBinding.upsert({
       where: { id: `bootstrap-bind-${ex.key}` },
       create: {
         id: `bootstrap-bind-${ex.key}`,
@@ -527,8 +586,12 @@ export async function bootstrapRealWebExamples() {
   return { ok: true, count: examples.length };
 }
 
-export async function getConversationIntegrationWorkspace(conversationId: string, roleNames: string[]) {
-  const conversation = await prisma.conversation.findUnique({
+export async function getConversationIntegrationWorkspace(
+  conversationId: string,
+  authUser: { id: string; email: string; first_name: string; last_name: string },
+  roleNames: string[]
+) {
+  const conversation = await getPrisma().conversation.findUnique({
     where: { id: conversationId },
     include: {
       channel: true,
@@ -538,7 +601,7 @@ export async function getConversationIntegrationWorkspace(conversationId: string
   });
   if (!conversation) throw new HttpError(404, "Not found");
 
-  const bindings = await prisma.integrationAppBinding.findMany({
+  const bindings = await getPrisma().integrationAppBinding.findMany({
     where: {
       placement: "right_rail",
       is_visible: true,
@@ -563,6 +626,13 @@ export async function getConversationIntegrationWorkspace(conversationId: string
   };
 
   const conversationData: Record<string, unknown> = {
+    actor: {
+      id: authUser.id,
+      email: authUser.email,
+      first_name: authUser.first_name,
+      last_name: authUser.last_name,
+      roles: roleNames,
+    },
     conversation: {
       id: conversation.id,
       source: conversation.source,
@@ -599,6 +669,7 @@ export async function getConversationIntegrationWorkspace(conversationId: string
           name: string;
           icon: string;
           mode: IntegrationAppModeInput;
+          auth_type: IntegrationAuthTypeInput;
           view_mode: IntegrationAppViewMode;
           match_explain: string;
           sort_order: number;
@@ -616,6 +687,7 @@ export async function getConversationIntegrationWorkspace(conversationId: string
         name: string;
         icon: string;
         mode: IntegrationAppModeInput;
+        auth_type: IntegrationAuthTypeInput;
         view_mode: IntegrationAppViewMode;
         match_explain: string;
         sort_order: number;
@@ -628,6 +700,7 @@ export async function getConversationIntegrationWorkspace(conversationId: string
         name: binding.app.name,
         icon: binding.app.icon,
         mode: binding.app.mode as IntegrationAppModeInput,
+        auth_type: parseAuthType(binding.app.auth_type),
         view_mode: parseViewMode(asObject(binding.app.config).view_mode),
         match_explain:
           binding.scope_type === "GLOBAL"
@@ -640,7 +713,63 @@ export async function getConversationIntegrationWorkspace(conversationId: string
         const base = binding.app.base_url.replace(/\/$/, "");
         const pathTpl = String(cfg.embed_path_template ?? "");
         const path = pathTpl ? renderTemplate(pathTpl, conversationData) : "";
-        appOut.embed_url = `${base}${path}`;
+        let embedUrl = `${base}${path}`;
+
+        if (appOut.auth_type === "JWT") {
+          const jwtSecret =
+            stringOrNull(cfg.jwt_signing_secret) ??
+            getCredentialValue(binding.app.credentials_ref, cfg);
+          if (!jwtSecret) {
+            throw new HttpError(
+              400,
+              `Missing JWT credential for integration app "${binding.app.key}". Configure credentials_ref or config.jwt_signing_secret in DB.`
+            );
+          }
+          const expiresIn = stringOrNull(cfg.jwt_expires_in) ?? "2m";
+          const tokenParam = stringOrNull(cfg.auth_query_param) ?? "token";
+          const issuer = stringOrNull(cfg.jwt_issuer) ?? "cortexcc";
+          const audience = stringOrNull(cfg.jwt_audience);
+          const token = jwt.sign(
+            {
+              id: authUser.id,
+              userId: authUser.id,
+              sub: authUser.id,
+              email: authUser.email,
+              first_name: authUser.first_name,
+              last_name: authUser.last_name,
+              roles: roleNames,
+              conversation: conversationData.conversation,
+              contact: conversationData.contact,
+              source: "cortexcc_embed",
+            },
+            jwtSecret,
+            {
+              algorithm: "HS256",
+              issuer,
+              ...(audience ? { audience } : {}),
+              expiresIn,
+            } as SignOptions
+          );
+          embedUrl = appendQueryParams(embedUrl, { [tokenParam]: token });
+        } else if (appOut.auth_type === "API_KEY") {
+          const apiKey =
+            getCredentialValue(binding.app.credentials_ref, cfg) ??
+            stringOrNull(cfg.api_key) ??
+            stringOrNull(cfg.integration_api_key);
+          if (apiKey) {
+            const apiKeyParam = stringOrNull(cfg.auth_query_param) ?? "api_key";
+            embedUrl = appendQueryParams(embedUrl, { [apiKeyParam]: apiKey });
+          }
+        } else if (appOut.auth_type === "OAUTH2") {
+          const accessToken =
+            getCredentialValue(binding.app.credentials_ref, cfg) ?? stringOrNull(cfg.oauth_access_token);
+          if (accessToken) {
+            const oauthParam = stringOrNull(cfg.auth_query_param) ?? "access_token";
+            embedUrl = appendQueryParams(embedUrl, { [oauthParam]: accessToken });
+          }
+        }
+
+        appOut.embed_url = embedUrl;
       }
       if (binding.app.mode === "SNAPSHOT") {
         const cardsRaw = Array.isArray(cfg.cards) ? cfg.cards : [];

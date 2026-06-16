@@ -1,8 +1,9 @@
 import type { ConversationStatus, Prisma } from "@prisma/client";
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
 import { HttpError } from "../middleware/errorHandler.js";
 import { mapConversation, mapMessage, type ActiveAssigneeInfo } from "./conversationMapper.js";
-import { enqueueOutbound, enqueueRouting, enqueueSlaCheck } from "../queue/bull.js";
+import { enqueueOutbound, enqueueRouting } from "../queue/bull.js";
+import { scheduleInitialSlaCheck } from "./slaCheck.service.js";
 import { mapChannelType } from "../lib/channelTypes.js";
 import * as contactService from "./contact.service.js";
 
@@ -19,7 +20,7 @@ const convInclude = {
 } as const;
 
 async function activeAssignee(conversationId: string): Promise<ActiveAssigneeInfo | null> {
-  const a = await prisma.conversationAssignment.findFirst({
+  const a = await getPrisma().conversationAssignment.findFirst({
     where: { conversation_id: conversationId, ended_at: null },
     include: { user: true },
   });
@@ -39,7 +40,7 @@ export async function assertAgentCanAccessConversation(
   viewer: ConversationViewer
 ): Promise<void> {
   if (viewer.isSupervisor) return;
-  const ok = await prisma.conversation.findFirst({
+  const ok = await getPrisma().conversation.findFirst({
     where: {
       id: conversationId,
       OR: [
@@ -65,7 +66,7 @@ const CONVERSATION_STATUS_FILTERS: ReadonlySet<string> = new Set([
 
 /** Carga y mapea sin comprobar permisos (respuestas tras mutaciones ya autorizadas p. ej. resolve/transfer). */
 async function getConversationMapped(id: string) {
-  const c = await prisma.conversation.findUnique({
+  const c = await getPrisma().conversation.findUnique({
     where: { id },
     include: convInclude,
   });
@@ -111,14 +112,14 @@ export async function listConversations(params: {
   }
 
   const [rows, total] = await Promise.all([
-    prisma.conversation.findMany({
+    getPrisma().conversation.findMany({
       where,
       include: convInclude,
       orderBy: { updated_at: "desc" },
       skip,
       take: limit,
     }),
-    prisma.conversation.count({ where }),
+    getPrisma().conversation.count({ where }),
   ]);
 
   const items = await Promise.all(
@@ -134,7 +135,7 @@ export async function getConversation(id: string, viewer?: ConversationViewer) {
 }
 
 export async function acceptConversation(conversationId: string, userId: string) {
-  const assignment = await prisma.conversationAssignment.findFirst({
+  const assignment = await getPrisma().conversationAssignment.findFirst({
     where: { conversation_id: conversationId, user_id: userId, ended_at: null },
   });
   if (!assignment) {
@@ -143,12 +144,12 @@ export async function acceptConversation(conversationId: string, userId: string)
       "No hay asignación pendiente para tu usuario en esta conversación (puede estar asignada a otro agente)."
     );
   }
-  await prisma.$transaction([
-    prisma.conversation.update({
+  await getPrisma().$transaction([
+    getPrisma().conversation.update({
       where: { id: conversationId },
       data: { status: "ACTIVE", wait_time_seconds: null },
     }),
-    prisma.conversationAssignment.update({
+    getPrisma().conversationAssignment.update({
       where: { id: assignment.id },
       data: { accepted_at: new Date() },
     }),
@@ -157,7 +158,7 @@ export async function acceptConversation(conversationId: string, userId: string)
 }
 
 export async function rejectConversation(conversationId: string, userId: string) {
-  const assignment = await prisma.conversationAssignment.findFirst({
+  const assignment = await getPrisma().conversationAssignment.findFirst({
     where: { conversation_id: conversationId, user_id: userId, ended_at: null },
   });
   if (!assignment) {
@@ -166,12 +167,12 @@ export async function rejectConversation(conversationId: string, userId: string)
       "No hay asignación pendiente para tu usuario en esta conversación (puede estar asignada a otro agente)."
     );
   }
-  await prisma.$transaction([
-    prisma.conversationAssignment.update({
+  await getPrisma().$transaction([
+    getPrisma().conversationAssignment.update({
       where: { id: assignment.id },
       data: { ended_at: new Date(), reason: "rejected" },
     }),
-    prisma.conversation.update({
+    getPrisma().conversation.update({
       where: { id: conversationId },
       data: { status: "WAITING" },
     }),
@@ -182,7 +183,7 @@ export async function rejectConversation(conversationId: string, userId: string)
 
 export async function holdConversation(conversationId: string, viewer: ConversationViewer) {
   await assertAgentCanAccessConversation(conversationId, viewer);
-  const conv = await prisma.conversation.findUnique({
+  const conv = await getPrisma().conversation.findUnique({
     where: { id: conversationId },
     select: { status: true },
   });
@@ -190,7 +191,7 @@ export async function holdConversation(conversationId: string, viewer: Conversat
   if (conv.status !== "ACTIVE" && conv.status !== "WRAP_UP") {
     throw new HttpError(400, "Solo puedes poner en espera una conversación activa o en cierre.");
   }
-  await prisma.conversation.update({
+  await getPrisma().conversation.update({
     where: { id: conversationId },
     data: { status: "ON_HOLD" },
   });
@@ -199,7 +200,7 @@ export async function holdConversation(conversationId: string, viewer: Conversat
 
 export async function resumeConversation(conversationId: string, viewer: ConversationViewer) {
   await assertAgentCanAccessConversation(conversationId, viewer);
-  const conv = await prisma.conversation.findUnique({
+  const conv = await getPrisma().conversation.findUnique({
     where: { id: conversationId },
     select: { status: true },
   });
@@ -207,7 +208,7 @@ export async function resumeConversation(conversationId: string, viewer: Convers
   if (conv.status !== "ON_HOLD") {
     throw new HttpError(400, "La conversación no está en espera.");
   }
-  await prisma.conversation.update({
+  await getPrisma().conversation.update({
     where: { id: conversationId },
     data: { status: "ACTIVE" },
   });
@@ -222,19 +223,19 @@ export async function resolveConversation(
 ) {
   await assertAgentCanAccessConversation(conversationId, viewer);
   if (!viewer.isSupervisor) {
-    const mine = await prisma.conversationAssignment.findFirst({
+    const mine = await getPrisma().conversationAssignment.findFirst({
       where: { conversation_id: conversationId, user_id: viewer.userId, ended_at: null },
     });
     if (!mine) {
       throw new HttpError(403, "No tienes una asignación activa; no puedes resolver esta conversación.");
     }
   }
-  const disposition = await prisma.disposition.findUnique({ where: { id: dispositionId } });
+  const disposition = await getPrisma().disposition.findUnique({ where: { id: dispositionId } });
   if (!disposition) throw new HttpError(400, "Invalid disposition");
   if (disposition.requires_note && !note) {
     throw new HttpError(400, "Note required");
   }
-  await prisma.$transaction(async (tx) => {
+  await getPrisma().$transaction(async (tx) => {
     await tx.conversation.update({
       where: { id: conversationId },
       data: {
@@ -265,11 +266,11 @@ export async function transferConversation(
 ) {
   if (!fromUserId) throw new HttpError(401, "Unauthorized");
   await assertAgentCanAccessConversation(conversationId, { userId: fromUserId, isSupervisor });
-  const conv = await prisma.conversation.findUnique({ where: { id: conversationId } });
+  const conv = await getPrisma().conversation.findUnique({ where: { id: conversationId } });
   if (!conv) throw new HttpError(404, "Not found");
 
   if (!isSupervisor && conv.status !== "WAITING") {
-    const mine = await prisma.conversationAssignment.findFirst({
+    const mine = await getPrisma().conversationAssignment.findFirst({
       where: { conversation_id: conversationId, user_id: fromUserId, ended_at: null },
     });
     if (!mine) {
@@ -278,14 +279,14 @@ export async function transferConversation(
   }
 
   if (body.queue_id) {
-    await prisma.conversation.update({
+    await getPrisma().conversation.update({
       where: { id: conversationId },
       data: {
         queue_id: body.queue_id,
         status: "WAITING",
       },
     });
-    await prisma.transfer.create({
+    await getPrisma().transfer.create({
       data: {
         conversation_id: conversationId,
         from_user_id: fromUserId,
@@ -295,7 +296,7 @@ export async function transferConversation(
         transfer_type: "agent_to_queue",
       },
     });
-    await prisma.conversationAssignment.updateMany({
+    await getPrisma().conversationAssignment.updateMany({
       where: { conversation_id: conversationId, ended_at: null },
       data: { ended_at: new Date() },
     });
@@ -304,7 +305,7 @@ export async function transferConversation(
   }
 
   if (body.target_id && (body.target_type === "agent" || body.target_type === "supervisor")) {
-    await prisma.$transaction(async (tx) => {
+    await getPrisma().$transaction(async (tx) => {
       await tx.conversationAssignment.updateMany({
         where: { conversation_id: conversationId, ended_at: null },
         data: { ended_at: new Date() },
@@ -352,7 +353,7 @@ export async function appendMessage(
   viewer: ConversationViewer
 ) {
   await assertAgentCanAccessConversation(conversationId, viewer);
-  const conv = await prisma.conversation.findUnique({
+  const conv = await getPrisma().conversation.findUnique({
     where: { id: conversationId },
     select: { id: true, status: true },
   });
@@ -370,7 +371,7 @@ export async function appendMessage(
     }
   }
 
-  const msg = await prisma.message.create({
+  const msg = await getPrisma().message.create({
     data: {
       conversation_id: conversationId,
       sender_type: input.sender_type ?? "AGENT",
@@ -396,7 +397,7 @@ export async function appendMessage(
     include: messageInclude,
   });
 
-  await prisma.conversation.update({
+  await getPrisma().conversation.update({
     where: { id: conversationId },
     data: {
       last_message_preview: input.content.slice(0, 200),
@@ -420,14 +421,14 @@ export async function listMessages(
   await assertAgentCanAccessConversation(conversationId, viewer);
   const skip = (page - 1) * limit;
   const [rows, total] = await Promise.all([
-    prisma.message.findMany({
+    getPrisma().message.findMany({
       where: { conversation_id: conversationId },
       orderBy: { created_at: "desc" },
       skip,
       take: limit,
       include: messageInclude,
     }),
-    prisma.message.count({ where: { conversation_id: conversationId } }),
+    getPrisma().message.count({ where: { conversation_id: conversationId } }),
   ]);
   return {
     data: rows.reverse().map((m) => mapMessage(m)),
@@ -448,12 +449,12 @@ export async function createConversationFromEscalation(data: {
 }) {
   const queue =
     (data.queueId &&
-      (await prisma.queue.findFirst({
+      (await getPrisma().queue.findFirst({
         where: { OR: [{ id: data.queueId }, { name: data.queueId }] },
       }))) ||
-    (await prisma.queue.findFirst({ where: { is_active: true } }));
+    (await getPrisma().queue.findFirst({ where: { is_active: true } }));
 
-  const conv = await prisma.conversation.create({
+  const conv = await getPrisma().conversation.create({
     data: {
       channel_id: data.channelId,
       contact_id: data.contactId,
@@ -469,14 +470,14 @@ export async function createConversationFromEscalation(data: {
   });
   await enqueueRouting({ conversationId: conv.id });
   if (queue?.id) {
-    await enqueueSlaCheck({ conversationId: conv.id, queueId: queue.id });
+    await scheduleInitialSlaCheck(conv.id, queue.id);
   }
   return conv.id;
 }
 
 export async function getEscalationContext(id: string, viewer: ConversationViewer) {
   await assertAgentCanAccessConversation(id, viewer);
-  const c = await prisma.conversation.findUnique({
+  const c = await getPrisma().conversation.findUnique({
     where: { id },
     select: {
       id: true,
@@ -525,19 +526,19 @@ export async function createManualConversation(
 
   let channelId = body.channel_id;
   if (!channelId && body.channel_type) {
-    const ch = await prisma.channel.findFirst({ where: { type: mapChannelType(body.channel_type) } });
+    const ch = await getPrisma().channel.findFirst({ where: { type: mapChannelType(body.channel_type) } });
     channelId = ch?.id;
   }
   if (!channelId) throw new HttpError(400, "channel_id or channel_type required");
 
   const queue =
     (body.queue_id &&
-      (await prisma.queue.findFirst({
+      (await getPrisma().queue.findFirst({
         where: { OR: [{ id: body.queue_id }, { name: body.queue_id }] },
       }))) ||
-    (await prisma.queue.findFirst({ where: { is_active: true } }));
+    (await getPrisma().queue.findFirst({ where: { is_active: true } }));
 
-  const conv = await prisma.conversation.create({
+  const conv = await getPrisma().conversation.create({
     data: {
       channel_id: channelId,
       contact_id: contactId,
@@ -550,7 +551,7 @@ export async function createManualConversation(
   });
 
   if (body.initial_message?.trim()) {
-    const m = await prisma.message.create({
+    const m = await getPrisma().message.create({
       data: {
         conversation_id: conv.id,
         sender_type: "AGENT",
@@ -560,7 +561,7 @@ export async function createManualConversation(
         is_internal: false,
       },
     });
-    await prisma.conversation.update({
+    await getPrisma().conversation.update({
       where: { id: conv.id },
       data: {
         last_message_preview: body.initial_message.trim().slice(0, 200),
@@ -572,7 +573,7 @@ export async function createManualConversation(
 
   await enqueueRouting({ conversationId: conv.id });
   if (queue?.id) {
-    await enqueueSlaCheck({ conversationId: conv.id, queueId: queue.id });
+    await scheduleInitialSlaCheck(conv.id, queue.id);
   }
 
   return getConversation(conv.id, getViewer);
@@ -611,7 +612,7 @@ export async function inboxGlobalSearch(params: {
     ? textSearch
     : { AND: [visibility, textSearch] };
 
-  const rows = await prisma.conversation.findMany({
+  const rows = await getPrisma().conversation.findMany({
     where,
     include: convInclude,
     orderBy: { updated_at: "desc" },

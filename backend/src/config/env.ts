@@ -6,7 +6,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(3030),
   API_PREFIX: z.string().default("/api"),
   CORS_ORIGIN: z.string().default("http://localhost:8080"),
-  DATABASE_URL: z.string(),
+  MASTER_DATABASE_URL: z.string(),
+  DATABASE_URL: z.string().optional(),
   JWT_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().default("15m"),
@@ -39,6 +40,8 @@ export const env = parsed.success
       PORT: 3030,
       API_PREFIX: "/api",
       CORS_ORIGIN: "http://localhost:8080",
+      MASTER_DATABASE_URL:
+        process.env.MASTER_DATABASE_URL ?? "postgresql://test:test@localhost:5432/cortexcc_master",
       DATABASE_URL: process.env.DATABASE_URL ?? "postgresql://test:test@localhost:5432/test",
       JWT_SECRET: "test-secret-32-chars-minimum-length!!",
       JWT_REFRESH_SECRET: "test-refresh-secret-32-chars-minimum!!",

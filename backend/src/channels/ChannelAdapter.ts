@@ -29,6 +29,7 @@ export interface IncomingMessage {
 export interface HealthStatus {
   ok: boolean;
   detail?: string;
+  warnings?: string[];
 }
 
 export interface ChannelAdapter {

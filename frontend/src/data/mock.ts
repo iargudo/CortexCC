@@ -50,6 +50,9 @@ export interface Message {
   is_internal: boolean;
   delivery_status: string;
   created_at: string;
+  metadata?: Record<string, unknown>;
+  call_duration_seconds?: number;
+  call_recording_url?: string;
   attachments?: { filename: string; mime_type: string; size_bytes: number; url?: string }[];
 }
 

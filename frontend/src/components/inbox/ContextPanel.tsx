@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as LucideIcons from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { apiJson } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Phone } from "lucide-react";
 import {
   type Conversation,
   type ConversationIntegrationRuntimeApp,
@@ -8,10 +13,8 @@ import {
   type EscalationCredito,
   type QuickReply,
 } from "@/data/mock";
-import { apiJson } from "@/lib/api";
 import { ChannelBadge } from "@/components/ChannelIcon";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -34,12 +37,46 @@ import {
   ExternalLink as ExternalOpenIcon,
 } from "lucide-react";
 import { ContactDetailDrawer } from "@/components/contacts/ContactDetailDrawer";
+import { ContactActivityRadar } from "@/components/contacts/ContactActivityRadar";
+
+function toPascalCaseIconName(value: string): string {
+  return value
+    .trim()
+    .replace(/[_\s-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join("");
+}
+
+function resolveLucideIcon(iconName: string | null | undefined): LucideIcon {
+  const fallback = Link;
+  const raw = String(iconName ?? "").trim();
+  if (!raw) return fallback;
+
+  const candidates = [raw, toPascalCaseIconName(raw)];
+  for (const candidate of candidates) {
+    const icon = (LucideIcons as Record<string, unknown>)[candidate];
+    if (typeof icon === "function" || (typeof icon === "object" && icon !== null)) {
+      return icon as LucideIcon;
+    }
+  }
+  return fallback;
+}
 
 export function ContextPanel({ conversation }: { conversation: Conversation }) {
+  const DEFAULT_PANEL_WIDTH = 384;
+  const MIN_PANEL_WIDTH = 320;
+  const MAX_PANEL_WIDTH = 1120;
+  const WORKSPACE_WIDTH_RATIO = 0.68;
   const [detailOpen, setDetailOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<string>("context");
   const [expandedEmbed, setExpandedEmbed] = useState<ConversationIntegrationRuntimeApp | null>(null);
   const [wideWorkspace, setWideWorkspace] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
+  const [lastNormalWidth, setLastNormalWidth] = useState(DEFAULT_PANEL_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
+  const activePointerIdRef = useRef<number | null>(null);
   const contact = conversation.contact;
 
   const qrQuery = useQuery({
@@ -53,15 +90,6 @@ export function ContextPanel({ conversation }: { conversation: Conversation }) {
     queryFn: () =>
       apiJson<ConversationIntegrationsWorkspace>(`/conversations/${encodeURIComponent(conversation.id)}/integrations`),
   });
-
-  const appIcons: Record<string, typeof Link> = {
-    Link,
-    MapPinned,
-    Wallet,
-    UserCircle2,
-    Sparkles,
-    LayoutGrid,
-  };
 
   const integrationApps = useMemo(
     () => [...(integrationsQuery.data?.apps ?? [])].sort((a, b) => a.sort_order - b.sort_order),
@@ -79,29 +107,133 @@ export function ContextPanel({ conversation }: { conversation: Conversation }) {
     activePanel === "context" ? null : integrationApps.find((app) => app.id === activePanel) ?? null;
   const isInlineEmbedSelected =
     selectedApp?.mode === "EMBED" && selectedApp.view_mode !== "EXTERNAL_TAB";
+  const isEscalationContextPanel = activePanel === "context";
+  const canResizeSelectedApp = Boolean(selectedApp) && !isEscalationContextPanel;
+
+  const clampPanelWidth = (nextWidth: number) => {
+    const maxByViewport = Math.max(
+      MIN_PANEL_WIDTH,
+      Math.min(MAX_PANEL_WIDTH, window.innerWidth - 280)
+    );
+    return Math.min(maxByViewport, Math.max(MIN_PANEL_WIDTH, nextWidth));
+  };
 
   useEffect(() => {
     if (!isInlineEmbedSelected) setWideWorkspace(false);
   }, [isInlineEmbedSelected]);
 
+  useEffect(() => {
+    if (!canResizeSelectedApp) return;
+    const onResize = () => {
+      setPanelWidth((current) => clampPanelWidth(current));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [canResizeSelectedApp]);
+
+  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canResizeSelectedApp) return;
+    event.preventDefault();
+    const handleElement = event.currentTarget;
+    activePointerIdRef.current = event.pointerId;
+    handleElement.setPointerCapture(event.pointerId);
+    setIsResizing(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      if (activePointerIdRef.current !== null && moveEvent.pointerId !== activePointerIdRef.current) return;
+      const next = window.innerWidth - moveEvent.clientX;
+      const clamped = clampPanelWidth(next);
+      setPanelWidth(clamped);
+      if (!wideWorkspace) {
+        setLastNormalWidth(clamped);
+      }
+    };
+
+    const onPointerUp = (upEvent?: PointerEvent) => {
+      if (upEvent && activePointerIdRef.current !== null && upEvent.pointerId !== activePointerIdRef.current) return;
+      setIsResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      if (
+        activePointerIdRef.current !== null &&
+        handleElement.hasPointerCapture(activePointerIdRef.current)
+      ) {
+        handleElement.releasePointerCapture(activePointerIdRef.current);
+      }
+      activePointerIdRef.current = null;
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("blur", onWindowBlur);
+    };
+
+    const onWindowBlur = () => onPointerUp();
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    window.addEventListener("blur", onWindowBlur);
+  };
+
+  const handleWorkspaceToggle = () => {
+    if (!canResizeSelectedApp) return;
+    if (wideWorkspace) {
+      setWideWorkspace(false);
+      setPanelWidth(clampPanelWidth(lastNormalWidth));
+      return;
+    }
+
+    setLastNormalWidth(clampPanelWidth(panelWidth));
+    setWideWorkspace(true);
+    setPanelWidth(clampPanelWidth(Math.max(panelWidth, Math.round(window.innerWidth * WORKSPACE_WIDTH_RATIO))));
+  };
+
   const renderContextBase = () => (
     <>
       {/* Contact info */}
       <div className="p-4">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-sm font-bold">
+        <button
+          type="button"
+          onClick={() => setDetailOpen(true)}
+          className="flex items-center gap-3 mb-3 w-full text-left rounded-lg p-1 -m-1 hover:bg-muted/60 transition-colors"
+          title="Ver detalle del contacto"
+        >
+          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-sm font-bold shrink-0">
             {contact.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="font-medium text-sm">{contact.name}</p>
             <p className="text-xs text-muted-foreground">{contact.source_system || "Directo"}</p>
           </div>
-        </div>
+        </button>
         <div className="space-y-1.5 text-xs text-muted-foreground">
           {contact.phone && (
-            <p className="flex items-center gap-2">
-              <User size={12} /> {contact.phone}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="flex items-center gap-2 flex-1">
+                <User size={12} /> {contact.phone}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => {
+                  void apiJson("/voice/calls/originate", {
+                    method: "POST",
+                    body: JSON.stringify({
+                      phone: contact.phone,
+                      conversation_id: conversation.id,
+                      contact_id: contact.id,
+                    }),
+                  })
+                    .then(() => toast.success("Llamada iniciada"))
+                    .catch((err) => toast.error(err instanceof Error ? err.message : "Error al llamar"));
+                }}
+              >
+                <Phone size={12} className="mr-1" /> Llamar
+              </Button>
+            </div>
           )}
           {contact.email && (
             <p className="flex items-center gap-2">
@@ -119,9 +251,22 @@ export function ContextPanel({ conversation }: { conversation: Conversation }) {
             ))}
           </div>
         )}
+        <button
+          type="button"
+          onClick={() => setDetailOpen(true)}
+          className="mt-3 text-xs text-primary flex items-center gap-1 hover:underline"
+        >
+          <ExternalLink size={10} /> Ver detalle del contacto
+        </button>
       </div>
 
       <Separator />
+
+      <ContactActivityRadar
+        contactId={contact.id}
+        excludeConversationId={conversation.id}
+        onViewAll={() => setDetailOpen(true)}
+      />
 
       {/* Escalation context */}
       {conversation.source !== "direct" && (
@@ -177,9 +322,6 @@ export function ContextPanel({ conversation }: { conversation: Conversation }) {
                   <p className="text-xs">{conversation.escalation_context.agent_name}</p>
                 </div>
               )}
-              <button onClick={() => setDetailOpen(true)} className="text-xs text-primary flex items-center gap-1 hover:underline">
-                <ExternalLink size={10} /> Ver detalle del contacto
-              </button>
             </div>
           </div>
           <Separator />
@@ -260,7 +402,7 @@ export function ContextPanel({ conversation }: { conversation: Conversation }) {
                 size="icon"
                 variant={wideWorkspace ? "default" : "outline"}
                 className="h-8 w-8"
-                onClick={() => setWideWorkspace((prev) => !prev)}
+                onClick={handleWorkspaceToggle}
                 title={wideWorkspace ? "Vista normal" : "Modo trabajo"}
                 aria-label={wideWorkspace ? "Vista normal" : "Modo trabajo"}
               >
@@ -352,8 +494,27 @@ export function ContextPanel({ conversation }: { conversation: Conversation }) {
     </div>
   );
 
+  const asideWidth = canResizeSelectedApp ? clampPanelWidth(panelWidth) : undefined;
+
   return (
-    <aside className={`${wideWorkspace ? "w-[68vw] max-w-[1120px]" : "w-[24rem]"} h-full min-h-0 shrink-0 border-l bg-card flex transition-all`}>
+    <aside
+      className={`relative h-full min-h-0 shrink-0 border-l bg-card flex ${
+        canResizeSelectedApp ? (isResizing ? "" : "transition-[width] duration-150") : "transition-all"
+      } ${!canResizeSelectedApp ? (wideWorkspace ? "w-[68vw] max-w-[1120px]" : "w-[24rem]") : ""}`}
+      style={canResizeSelectedApp ? { width: `${asideWidth}px` } : undefined}
+    >
+      {canResizeSelectedApp && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Redimensionar panel lateral"
+          className="group absolute left-0 top-0 h-full w-3 -translate-x-1/2 cursor-col-resize select-none"
+          onPointerDown={startResize}
+        >
+          <div className="mx-auto h-full w-px bg-border/70 transition-colors group-hover:bg-primary/80" />
+          <div className="pointer-events-none absolute top-1/2 left-1/2 h-8 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-border/80 shadow-sm transition-colors group-hover:bg-primary/90" />
+        </div>
+      )}
       <div className={`flex-1 min-w-0 ${selectedApp ? "overflow-hidden" : "overflow-y-auto scrollbar-thin"}`}>
         {selectedApp ? renderIntegrationApp(selectedApp) : renderContextBase()}
       </div>
@@ -370,7 +531,7 @@ export function ContextPanel({ conversation }: { conversation: Conversation }) {
         </button>
         {integrationsQuery.isLoading && <span className="text-[10px] text-muted-foreground">...</span>}
         {integrationApps.map((app) => {
-          const Icon = appIcons[app.icon] ?? Link;
+          const Icon = resolveLucideIcon(app.icon);
           return (
             <button
               key={app.id}

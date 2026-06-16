@@ -7,11 +7,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { useSipPhone } from "@/hooks/useSipPhone";
+import { useSipPhoneContext } from "@/providers/sipPhoneContext";
 import { useSipStore } from "@/stores/sipStore";
 import { SoftphoneConfig } from "./SoftphoneConfig";
+import { SoftphoneStatusBanner } from "./SoftphoneStatusBanner";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { apiJson } from "@/lib/api";
+import { toast } from "sonner";
+import {
+  checkSoftphoneConfig,
+  getCallBlockReason,
+  getSoftphoneStatusMessage,
+} from "@/lib/softphoneDiagnostics";
 
 const DIALPAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 const DIALPAD_LETTERS: Record<string, string> = {
@@ -24,47 +31,15 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
     registrationState, currentCall,
     register, unregister, call, answer, reject, hangup,
     toggleMute, toggleHold, sendDtmf, blindTransfer,
-  } = useSipPhone();
+  } = useSipPhoneContext();
 
-  const { config, setConfig, callHistory, isConfigOpen, setConfigOpen } = useSipStore();
+  const { config, setConfig, callHistory, isConfigOpen, setConfigOpen, registrationError } = useSipStore();
   const [dialNumber, setDialNumber] = useState("");
   const [showTransfer, setShowTransfer] = useState(false);
   const [transferTarget, setTransferTarget] = useState("");
   const [activeTab, setActiveTab] = useState<string>("dialpad");
   const [callTimer, setCallTimer] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const loadedConfigRef = useRef(false);
-
-  useEffect(() => {
-    if (loadedConfigRef.current) return;
-    loadedConfigRef.current = true;
-    void (async () => {
-      try {
-        const remote = await apiJson<{
-          server: string;
-          realm: string;
-          displayName: string;
-          stunServers: string[];
-          iceGatheringTimeout: number;
-          extension: string;
-          password: string;
-        }>("/settings/softphone/me");
-        setConfig({
-          server: remote.server ?? "",
-          realm: remote.realm ?? "",
-          displayName: remote.displayName ?? "",
-          stunServers: Array.isArray(remote.stunServers) && remote.stunServers.length > 0
-            ? remote.stunServers
-            : ["stun:stun.l.google.com:19302"],
-          iceGatheringTimeout: typeof remote.iceGatheringTimeout === "number" ? remote.iceGatheringTimeout : 5000,
-          extension: remote.extension ?? "",
-          password: remote.password ?? "",
-        });
-      } catch (err) {
-        console.warn("[SOFTPHONE] failed to load persisted config", err);
-      }
-    })();
-  }, [setConfig]);
 
   // Call timer
   useEffect(() => {
@@ -94,20 +69,49 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
   const handleCall = () => {
     const target = dialNumber.trim();
     if (!target) {
-      console.info("[SOFTPHONE] call blocked: empty target");
+      toast.error("Ingrese un número o extensión para llamar.");
       return;
     }
-    if (registrationState !== "registered") {
-      console.info("[SOFTPHONE] call blocked: sip not registered", { registrationState, target });
+    const blockReason = getCallBlockReason({ config, registrationState });
+    if (blockReason) {
+      toast.error(blockReason);
       return;
     }
     console.info("[SOFTPHONE] dialing", {
       target,
       registrationState,
     });
-    call(target);
-    setDialNumber("");
+    void (async () => {
+      try {
+        await call(target);
+        setDialNumber("");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "No se pudo iniciar la llamada");
+      }
+    })();
   };
+
+  const handleRegisterToggle = () => {
+    if (registrationState === "registered") {
+      void unregister();
+      return;
+    }
+    const configCheck = checkSoftphoneConfig(config);
+    if (!configCheck.canRegister) {
+      toast.error(configCheck.issue!);
+      return;
+    }
+    void (async () => {
+      const ok = await register();
+      if (!ok) {
+        const err = useSipStore.getState().registrationError;
+        if (err) toast.error(err);
+      }
+    })();
+  };
+
+  const statusMessage = getSoftphoneStatusMessage({ config, registrationState, registrationError });
+  const configCheck = checkSoftphoneConfig(config);
 
   const handleTransfer = () => {
     if (transferTarget.trim()) {
@@ -121,21 +125,31 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
     ? <Wifi size={12} className="text-emerald-500" />
     : registrationState === "registering"
       ? <Loader2 size={12} className="animate-spin text-amber-500" />
-      : <WifiOff size={12} className="text-muted-foreground" />;
+      : registrationState === "error"
+        ? <WifiOff size={12} className="text-destructive" />
+        : <WifiOff size={12} className="text-muted-foreground" />;
 
   const regLabel = registrationState === "registered"
     ? "Conectado"
     : registrationState === "registering"
       ? "Conectando..."
       : registrationState === "error"
-        ? "Error"
+        ? "Sin conexión"
         : "Desconectado";
+
+  const connectedExtension =
+    config.extension && (registrationState === "registered" || registrationState === "registering")
+      ? config.extension
+      : null;
 
   // ─── Incoming call ringing view ───
   if (currentCall?.state === "ringing" && currentCall.direction === "inbound") {
     return (
       <div className="w-72 bg-card border rounded-xl shadow-2xl p-4 z-50 animate-slide-in-right">
         <div className="text-center space-y-3">
+          {connectedExtension && (
+            <p className="text-[10px] font-mono text-emerald-600">Ext. {connectedExtension}</p>
+          )}
           <div className="w-14 h-14 mx-auto rounded-full bg-primary/10 flex items-center justify-center animate-pulse">
             <PhoneIncoming size={24} className="text-primary" />
           </div>
@@ -172,13 +186,18 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
       <div className="w-72 bg-card border rounded-xl shadow-2xl p-4 z-50 animate-slide-in-right">
         {/* Header */}
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             {currentCall.direction === "inbound"
-              ? <PhoneIncoming size={12} className="text-primary" />
-              : <PhoneOutgoing size={12} className="text-primary" />}
-            <span className="text-[10px] text-muted-foreground uppercase font-medium">
-              {currentCall.direction === "inbound" ? "Entrante" : "Saliente"}
-            </span>
+              ? <PhoneIncoming size={12} className="text-primary shrink-0" />
+              : <PhoneOutgoing size={12} className="text-primary shrink-0" />}
+            <div className="min-w-0">
+              <span className="text-[10px] text-muted-foreground uppercase font-medium">
+                {currentCall.direction === "inbound" ? "Entrante" : "Saliente"}
+              </span>
+              {connectedExtension && (
+                <p className="text-[10px] font-mono text-emerald-600 truncate">Ext. {connectedExtension}</p>
+              )}
+            </div>
           </div>
           <span className={cn(
             "text-[10px] px-1.5 py-0.5 rounded-full font-medium",
@@ -188,7 +207,7 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
             currentCall.state === "ringing" && "bg-primary/15 text-primary",
           )}>
             {currentCall.state === "active" ? "En curso"
-              : currentCall.state === "connecting" ? "Conectando..."
+              : currentCall.state === "connecting" ? "Conectando audio..."
                 : currentCall.state === "on_hold" ? "En espera"
                   : "Timbrando..."}
           </span>
@@ -326,8 +345,13 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
                   }),
                 });
                 setConfigOpen(false);
-                await register();
+                const ok = await register();
+                if (!ok) {
+                  const err = useSipStore.getState().registrationError;
+                  if (err) toast.error(err);
+                }
               } catch (err) {
+                toast.error(err instanceof Error ? err.message : "No se pudo guardar la configuración");
                 console.error("[SOFTPHONE] failed to persist config", err);
               }
             })();
@@ -342,21 +366,31 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
     <div className="w-72 bg-card border rounded-xl shadow-2xl z-50 animate-slide-in-right overflow-hidden">
       {/* Status bar */}
       <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
-        <div className="flex items-center gap-1.5">
-          <Volume2 size={12} className="text-muted-foreground" />
-          <span className="text-xs font-medium">Softphone</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Volume2 size={12} className="text-muted-foreground shrink-0" />
+          <div className="min-w-0">
+            <span className="text-xs font-medium">Softphone</span>
+            {connectedExtension && (
+              <p className="text-[10px] font-mono text-emerald-600 truncate">
+                Ext. {connectedExtension}
+              </p>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
-            onClick={() => {
-              if (registrationState === "registered") unregister();
-              else register();
-            }}
+            onClick={handleRegisterToggle}
             className="flex items-center gap-1 hover:opacity-70 transition-opacity"
-            title={regLabel}
+            title={statusMessage ?? (connectedExtension ? `${regLabel} · Ext. ${connectedExtension}` : regLabel)}
+            data-testid="softphone-register"
           >
             {regIcon}
-            <span className="text-[10px] text-muted-foreground">{regLabel}</span>
+            <span className={cn(
+              "text-[10px]",
+              registrationState === "error" ? "text-destructive" : "text-muted-foreground"
+            )}>
+              {regLabel}
+            </span>
           </button>
           <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setConfigOpen(true)}>
             <Settings size={10} />
@@ -376,6 +410,18 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
         </TabsList>
 
         <TabsContent value="dialpad" className="p-3 mt-0 space-y-3">
+          {statusMessage && registrationState !== "registered" && (
+            <SoftphoneStatusBanner
+              message={statusMessage}
+              variant={
+                !configCheck.canRegister || registrationState === "error"
+                  ? "error"
+                  : registrationState === "registering"
+                    ? "info"
+                    : "warning"
+              }
+            />
+          )}
           {/* Number input */}
           <div className="relative">
             <Input
@@ -425,11 +471,9 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
             Llamar
           </Button>
 
-          {registrationState !== "registered" && (
+          {registrationState !== "registered" && !statusMessage && (
             <p className="text-[10px] text-center text-muted-foreground">
-              {registrationState === "error"
-                ? "Error de conexión. Revise la configuración."
-                : "Configure y conecte el servidor SIP para llamar."}
+              Configure y conecte el servidor SIP para llamar.
             </p>
           )}
         </TabsContent>

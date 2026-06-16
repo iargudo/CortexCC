@@ -1,4 +1,6 @@
 /** localStorage keys (must match socket.ts) */
+import { getStoredTenantKey } from "./tenantStorage";
+
 export const ACCESS_TOKEN_KEY = "cortexcc_access_token";
 export const REFRESH_TOKEN_KEY = "cortexcc_refresh_token";
 
@@ -27,6 +29,22 @@ function getRefreshToken(): string | null {
   return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
+function buildApiHeaders(init: RequestInit = {}): Headers {
+  const headers = new Headers(init.headers);
+  const tenantKey = getStoredTenantKey();
+  if (tenantKey) headers.set("X-Tenant-Key", tenantKey);
+  const token = getAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (
+    init.body !== undefined &&
+    typeof init.body === "string" &&
+    !headers.has("Content-Type")
+  ) {
+    headers.set("Content-Type", "application/json");
+  }
+  return headers;
+}
+
 export function setTokens(access: string, refresh?: string | null): void {
   localStorage.setItem(ACCESS_TOKEN_KEY, access);
   if (refresh) localStorage.setItem(REFRESH_TOKEN_KEY, refresh);
@@ -47,7 +65,7 @@ async function tryRefresh(): Promise<string | null> {
     try {
       const res = await fetch(`${getApiBase()}/auth/refresh`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: buildApiHeaders({ body: JSON.stringify({ refreshToken: rt }) }),
         body: JSON.stringify({ refreshToken: rt }),
       });
       if (!res.ok) return null;
@@ -66,31 +84,15 @@ async function tryRefresh(): Promise<string | null> {
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const url = path.startsWith("http") ? path : `${getApiBase()}${path.startsWith("/") ? path : `/${path}`}`;
-  const headers = new Headers(init.headers);
-  const token = getAccessToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (
-    init.body !== undefined &&
-    typeof init.body === "string" &&
-    !headers.has("Content-Type")
-  ) {
-    headers.set("Content-Type", "application/json");
-  }
+  const headers = buildApiHeaders(init);
 
   let res = await fetch(url, { ...init, headers });
 
   if (res.status === 401 && getRefreshToken()) {
     const newTok = await tryRefresh();
     if (newTok) {
-      const h2 = new Headers(init.headers);
+      const h2 = buildApiHeaders(init);
       h2.set("Authorization", `Bearer ${newTok}`);
-      if (
-        init.body !== undefined &&
-        typeof init.body === "string" &&
-        !h2.has("Content-Type")
-      ) {
-        h2.set("Content-Type", "application/json");
-      }
       res = await fetch(url, { ...init, headers: h2 });
     }
   }

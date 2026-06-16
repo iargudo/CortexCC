@@ -2,7 +2,10 @@ import type { Channel } from "@prisma/client";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import type { Server } from "socket.io";
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
+import { conversationRoom, userRoom } from "../lib/socketRooms.js";
+import { ensureConnection, listActiveTenants } from "../lib/tenantConnectionManager.js";
+import { runWithTenant } from "../lib/tenantContext.js";
 import { parseEmailChannelConfig, type EmailChannelConfig } from "../channels/email/config.js";
 import { ingestEmailIncoming } from "./emailInbound.service.js";
 
@@ -12,6 +15,10 @@ let timer: NodeJS.Timeout | null = null;
 const TICK_INTERVAL_MS = 5_000;
 const channelNextPollAt = new Map<string, number>();
 const MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function channelPollKey(tenantKey: string, channelId: string): string {
+  return `${tenantKey}:${channelId}`;
+}
 const EMAIL_LOOKBACK_HOURS = 24;
 
 function extractAddressList(value: unknown): string[] {
@@ -97,7 +104,7 @@ function htmlToText(html: string): string {
 
 async function messageAlreadyInSystem(messageId: string): Promise<boolean> {
   if (!messageId) return false;
-  const existing = await prisma.message.findFirst({
+  const existing = await getPrisma().message.findFirst({
     where: { email_message_id: messageId },
     select: { id: true },
   });
@@ -111,22 +118,29 @@ export function startEmailInboundPoller(io: Server | null): void {
     if (running) return;
     running = true;
     try {
-      const channels = await prisma.channel.findMany({
-        where: { type: "EMAIL", status: "active" },
-      });
-      for (const ch of channels) {
-        let cfg: EmailChannelConfig;
-        try {
-          cfg = parseEmailChannelConfig(ch.config);
-        } catch {
-          continue;
-        }
-        const now = Date.now();
-        const nextAt = channelNextPollAt.get(ch.id) ?? 0;
-        if (now < nextAt) continue;
-        const intervalMs = Math.max(10, Number(cfg.pollIntervalSec ?? 30)) * 1000;
-        channelNextPollAt.set(ch.id, now + intervalMs);
-        await pollEmailChannel(ch, cfg, io);
+      const tenants = await listActiveTenants();
+      for (const tenant of tenants) {
+        await runWithTenant(tenant.tenant_key, tenant.display_name, async () => {
+          await ensureConnection(tenant.tenant_key);
+          const channels = await getPrisma().channel.findMany({
+            where: { type: "EMAIL", status: "active" },
+          });
+          for (const ch of channels) {
+            let cfg: EmailChannelConfig;
+            try {
+              cfg = parseEmailChannelConfig(ch.config);
+            } catch {
+              continue;
+            }
+            const now = Date.now();
+            const pollKey = channelPollKey(tenant.tenant_key, ch.id);
+            const nextAt = channelNextPollAt.get(pollKey) ?? 0;
+            if (now < nextAt) continue;
+            const intervalMs = Math.max(10, Number(cfg.pollIntervalSec ?? 30)) * 1000;
+            channelNextPollAt.set(pollKey, now + intervalMs);
+            await pollEmailChannel(tenant.tenant_key, ch, cfg, io);
+          }
+        });
       }
     } catch (err) {
       console.error("email poller tick failed", err);
@@ -141,7 +155,12 @@ export function startEmailInboundPoller(io: Server | null): void {
   }, TICK_INTERVAL_MS);
 }
 
-async function pollEmailChannel(channel: Channel, cfg: EmailChannelConfig, io: Server | null): Promise<void> {
+async function pollEmailChannel(
+  tenantKey: string,
+  channel: Channel,
+  cfg: EmailChannelConfig,
+  io: Server | null
+): Promise<void> {
   const client = new ImapFlow({
     host: cfg.imapHost,
     port: cfg.imapPort,
@@ -213,21 +232,21 @@ async function pollEmailChannel(channel: Channel, cfg: EmailChannelConfig, io: S
           attachments: inlineImageAttachments,
         });
 
-        io?.to(`conversation:${out.conversation_id}`).emit("message:new", {
+        io?.to(conversationRoom(tenantKey, out.conversation_id)).emit("message:new", {
           conversationId: out.conversation_id,
         });
 
-        const assignments = await prisma.conversationAssignment.findMany({
+        const assignments = await getPrisma().conversationAssignment.findMany({
           where: { conversation_id: out.conversation_id, ended_at: null },
           select: { user_id: true },
         });
         for (const a of assignments) {
-          io?.to(`user:${a.user_id}`).emit("message:new", {
+          io?.to(userRoom(tenantKey, a.user_id)).emit("message:new", {
             conversationId: out.conversation_id,
           });
         }
 
-        await prisma.message.updateMany({
+        await getPrisma().message.updateMany({
           where: { id: out.message_id },
           data: {
             metadata: {

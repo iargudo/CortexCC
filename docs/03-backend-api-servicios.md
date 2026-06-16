@@ -15,7 +15,8 @@ Variables claves validadas en `backend/src/config/env.ts`:
 - `PORT` (default `3030`)
 - `API_PREFIX` (default `/api`)
 - `CORS_ORIGIN` (default `http://localhost:8080`)
-- `DATABASE_URL`
+- `MASTER_DATABASE_URL` — conexion a la base Master (tabla `tenants`)
+- `DATABASE_URL` — opcional en runtime; usada por scripts CLI (`migrate:tenant`, `seed:tenant`) apuntando a una BD tenant
 - `REDIS_URL`
 - `JWT_SECRET`
 - `JWT_REFRESH_SECRET`
@@ -23,12 +24,38 @@ Variables claves validadas en `backend/src/config/env.ts`:
 - `ENABLE_JOBS`
 - `SOCKETIO_PATH`
 
+Variables CLI para migraciones/seeds de un tenant concreto:
+
+- `TENANT_DB_HOST`, `TENANT_DB_PORT`, `TENANT_DB_USER`, `TENANT_DB_PASSWORD`, `TENANT_DB_NAME`
+
+Scripts npm:
+
+| Script | Uso |
+|---|---|
+| `npm run setup:master` | Crea BD Master + tabla `tenants` (`SEED_LOCAL_TENANT=true` registra tenant `local`) |
+| `npm run migrate:tenant` | `prisma migrate deploy` en una BD tenant (`TENANT_DB_*` o `DATABASE_URL`) |
+| `npm run migrate:all-tenants` | Migra todas las BDs de tenants activos en Master |
+| `npm run seed:tenant` | Seed de datos iniciales en una BD tenant |
+
+## Multi-tenant: headers y contrato
+
+Toda peticion HTTP (excepto `GET /health` y `GET /tenants/resolve`) requiere:
+
+```
+X-Tenant-Key: <tenant_key>
+```
+
+Rutas autenticadas ademas llevan `Authorization: Bearer <token>`. El JWT incluye `tenantKey` y debe coincidir con el header.
+
+Respuesta de login incluye `tenantKey` y `tenantName` ademas de `token`, `refreshToken` y `user`.
+
 ## Middleware y seguridad
 
+- `tenantMiddleware` — resuelve tenant, abre conexion y establece contexto ALS **antes** de auth.
 - `helmet` para cabeceras de seguridad.
 - `cors` con origen controlado por entorno.
 - `express-rate-limit` en el router.
-- `authMiddleware` para rutas privadas.
+- `authMiddleware` para rutas privadas (valida JWT + coincidencia `tenantKey`).
 - `integrationApiKeyMiddleware` para entradas de integracion.
 - `requirePermission` y `requireAnyPermission` para RBAC.
 
@@ -47,12 +74,19 @@ Variables claves validadas en `backend/src/config/env.ts`:
 
 > Todas las rutas son relativas a `API_PREFIX`.
 
+### Tenants (resolucion publica)
+
+- `GET /tenants/resolve?host=` — sin header; devuelve `{ key, name }` o 404
+- `GET /tenants/current` — con `X-Tenant-Key` + JWT; devuelve `{ key, name }`
+
+No existe listado publico de todos los tenants.
+
 ### Salud y autenticacion
 
-- `GET /health`
-- `POST /auth/login`
-- `POST /auth/refresh`
-- `POST /auth/logout`
+- `GET /health` — sin header (load balancers)
+- `POST /auth/login` — requiere `X-Tenant-Key`
+- `POST /auth/refresh` — requiere `X-Tenant-Key`
+- `POST /auth/logout` — requiere `X-Tenant-Key`
 - `GET /auth/me`
 - `PUT /auth/profile`
 - `PUT /auth/status`
@@ -60,8 +94,10 @@ Variables claves validadas en `backend/src/config/env.ts`:
 
 ### Integraciones y webhooks
 
-- `GET /integrations/status`
-- `POST /integrations/escalate`
+Los endpoints `/integrations/*` requieren **`X-Tenant-Key`** (como el resto de la API) además de **`x-api-key`** (`INTEGRATION_API_KEY`). El tenant indica en qué base de datos se crea o consulta la conversación.
+
+- `GET /integrations/status` — headers: `X-Tenant-Key`, `x-api-key`
+- `POST /integrations/escalate` — headers: `X-Tenant-Key`, `x-api-key`
 - `GET /conversations/:id/integrations`
 - `GET /settings/integration-apps`
 - `POST /settings/integration-apps`
@@ -72,7 +108,21 @@ Variables claves validadas en `backend/src/config/env.ts`:
 - `POST /settings/integration-bindings`
 - `PUT /settings/integration-bindings/:id`
 - `DELETE /settings/integration-bindings/:id`
-- `POST /webhooks/whatsapp/:channelId`
+- `POST /webhooks/:tenantKey/whatsapp/:channelId` — tenant en path (Meta/Twilio no envian headers custom)
+
+#### SSO embed para apps externas (actual)
+
+Para `GET /conversations/:id/integrations`, CortexCC ahora puede inyectar autenticacion en la `embed_url` segun `integration_apps.auth_type`:
+
+- `JWT`: firma token corto HS256 con claims de `actor`, `conversation`, `contact`.
+  - Config opcional por app (`config`): `auth_query_param`, `jwt_expires_in`, `jwt_issuer`, `jwt_audience`, `jwt_signing_secret`.
+  - Si no hay `jwt_signing_secret`, usa `credentials_ref`/`auth_credential_value` de la app (persistidos en DB).
+- `API_KEY`: inyecta credencial en query param.
+  - Fuente: `config.auth_credential_value`, `credentials_ref` o `config.api_key` (persistidos en DB).
+  - Param por defecto: `api_key` (override con `auth_query_param`).
+- `OAUTH2`: inyecta `access_token` preconfigurado.
+  - Fuente: `config.oauth_access_token` o `credentials_ref` (persistidos en DB).
+  - Param por defecto: `access_token` (override con `auth_query_param`).
 
 ### Conversaciones y mensajes
 
@@ -156,6 +206,7 @@ Variables claves validadas en `backend/src/config/env.ts`:
 - Business hours: `GET/POST /settings/business-hours`, `PUT /settings/business-hours/:id`
 - Email templates: `GET/POST /settings/email-templates`, `PUT/DELETE /settings/email-templates/:id`
 - General: `GET/PUT /settings/general`
+- **Telefonía PBX unificada**: `GET/PUT /settings/telephony` (host Asterisk, softphone org, sincroniza ARI en canal VOICE)
 - Soporte softphone usuario: `GET/PUT /settings/softphone/me`
 
 ### Voz

@@ -1,17 +1,28 @@
 import { Queue, Worker, type JobsOptions } from "bullmq";
 import { env } from "../config/env.js";
+import { getCurrentTenantKey } from "../lib/tenantContext.js";
 
 const connection = { url: env.REDIS_URL };
 
 export const routingQueue = new Queue("routing", { connection });
 export const slaCheckQueue = new Queue("sla-check", { connection });
 export const outboundMessagesQueue = new Queue("outbound-messages", { connection });
+export const dialerProgressiveQueue = new Queue("dialer-progressive", { connection });
+export const dialerPredictiveQueue = new Queue("dialer-predictive", { connection });
+
+function withTenantKey<T extends Record<string, unknown>>(data: T): T & { tenantKey: string } {
+  return { ...data, tenantKey: getCurrentTenantKey() };
+}
 
 export async function enqueueRouting(
   data: { conversationId: string },
   opts?: JobsOptions
 ): Promise<void> {
-  await routingQueue.add("route", data, { attempts: 3, backoff: { type: "exponential", delay: 2000 }, ...opts });
+  await routingQueue.add("route", withTenantKey(data), {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 2000 },
+    ...opts,
+  });
 }
 
 export async function enqueueSlaCheck(
@@ -20,15 +31,35 @@ export async function enqueueSlaCheck(
 ): Promise<void> {
   await slaCheckQueue.add(
     "check",
-    data,
+    withTenantKey(data),
     { delay: 10_000, attempts: 5, backoff: { type: "fixed", delay: 10_000 }, ...opts }
   );
 }
 
 export async function enqueueOutbound(data: { messageId: string }, opts?: JobsOptions): Promise<void> {
-  await outboundMessagesQueue.add("send", data, {
+  await outboundMessagesQueue.add("send", withTenantKey(data), {
     attempts: 4,
     backoff: { type: "exponential", delay: 3000 },
+    ...opts,
+  });
+}
+
+export async function enqueueDialerProgressive(
+  data: { campaignId: string },
+  opts?: JobsOptions
+): Promise<void> {
+  await dialerProgressiveQueue.add("tick", withTenantKey(data), {
+    attempts: 2,
+    ...opts,
+  });
+}
+
+export async function enqueueDialerPredictive(
+  data: { campaignId: string },
+  opts?: JobsOptions
+): Promise<void> {
+  await dialerPredictiveQueue.add("tick", withTenantKey(data), {
+    attempts: 2,
     ...opts,
   });
 }
@@ -64,5 +95,25 @@ export function createOutboundWorker(process: WorkerProcessor): Worker {
       await process(job as { data: Record<string, unknown> });
     },
     { connection, concurrency: env.QUEUE_CONCURRENCY }
+  );
+}
+
+export function createDialerProgressiveWorker(process: WorkerProcessor): Worker {
+  return new Worker(
+    "dialer-progressive",
+    async (job) => {
+      await process(job as { data: Record<string, unknown> });
+    },
+    { connection, concurrency: 2 }
+  );
+}
+
+export function createDialerPredictiveWorker(process: WorkerProcessor): Worker {
+  return new Worker(
+    "dialer-predictive",
+    async (job) => {
+      await process(job as { data: Record<string, unknown> });
+    },
+    { connection, concurrency: 2 }
   );
 }

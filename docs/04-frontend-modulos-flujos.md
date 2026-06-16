@@ -12,9 +12,22 @@ Entradas y layout:
 
 - `frontend/src/main.tsx`
 - `frontend/src/App.tsx`
+- `frontend/src/components/TenantBootstrap.tsx` — resuelve tenant antes del login
+- `frontend/src/components/AuthBootstrap.tsx` — restaura sesion tras resolver tenant
 - `frontend/src/components/AppLayout.tsx`
 - `frontend/src/components/AppSidebar.tsx`
-- `frontend/src/components/HeaderBar.tsx`
+- `frontend/src/components/HeaderBar.tsx` — muestra `tenantName`
+
+Multi-tenant (frontend):
+
+| Modulo | Ruta | Funcion |
+|---|---|---|
+| `tenantStorage.ts` | `src/lib/` | Persiste `tenantKey` + `tenantName` en localStorage |
+| `resolveTenant.ts` | `src/lib/` | localhost → `VITE_TENANT_KEY`; prod → `GET /tenants/resolve?host=` |
+| `webhookUrls.ts` | `src/lib/` | Construye URL de webhook WhatsApp con tenant |
+| `api.ts` | `src/lib/` | Inyecta `X-Tenant-Key` en `apiFetch` y `tryRefresh` |
+| `tenantStore.ts` | `src/stores/` | Estado de resolucion de tenant |
+| `TenantErrorPage.tsx` | `src/pages/` | Dominio no configurado (404 resolve) |
 
 Paginas funcionales:
 
@@ -86,12 +99,14 @@ Comportamiento destacado:
 
 ## Flujos de UI relevantes
 
-## Flujo A: Login -> operacion
+## Flujo A: Boot -> Login -> operacion
 
-1. Usuario autentica.
-2. Se obtiene perfil/rol y permisos.
-3. Se habilitan modulos segun RBAC.
-4. Se inicializa vista principal y datos de bandeja.
+1. `TenantBootstrap` resuelve tenant (hostname en prod, `VITE_TENANT_KEY` en localhost).
+2. Si el dominio no esta registrado → pantalla de error (sin login).
+3. `AuthBootstrap` restaura sesion (`GET /auth/me`) con `X-Tenant-Key`.
+4. Usuario autentica (solo email + contraseña; sin selector de empresa).
+5. Se obtiene perfil/rol y permisos; respuesta incluye `tenantKey`/`tenantName`.
+6. Se habilitan modulos segun RBAC y se inicializa bandeja.
 
 ## Flujo B: Conversacion entrante
 
@@ -114,5 +129,16 @@ Variables comunes (`frontend/.env`):
 - `VITE_API_URL`
 - `VITE_WS_URL`
 - `VITE_SOCKET_PATH`
+
+**Solo desarrollo (localhost):**
+
+- `VITE_TENANT_KEY` — obligatorio (ej. `local`)
+- `VITE_TENANT_NAME` — nombre visible (ej. `Desarrollo Local`)
+
+**Desarrollo en LAN (IP):** no usar `VITE_TENANT_KEY`; registrar la IP en `tenants.custom_domain`. El frontend debe servirse por **HTTPS** (`https://<IP>:8080`) para que el softphone WebRTC pueda usar el micrófono. Ver [05-telefonia-asterisk-softphone.md](./05-telefonia-asterisk-softphone.md#pruebas-en-lan-desarrollo).
+
+En **produccion** no definir `VITE_TENANT_KEY`: el tenant se resuelve por `window.location.hostname` via `GET /api/tenants/resolve`. Un unico despliegue frontend atiende N dominios (DNS apuntando al mismo origin).
+
+Socket.IO envia `auth: { token, tenantKey }` al conectar.
 
 La UI depende de que backend y WebSocket esten accesibles con CORS compatible.

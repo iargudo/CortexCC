@@ -1,15 +1,17 @@
 import { io, type Socket } from "socket.io-client";
 import { ACCESS_TOKEN_KEY, getSocketPath, getWsOrigin } from "./api";
+import { getStoredTenantKey } from "./tenantStorage";
 
 let socket: Socket | null = null;
 
 export function getSocket(): Socket | null {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-  if (!token) return null;
+  const tenantKey = getStoredTenantKey();
+  if (!token || !tenantKey) return null;
   if (!socket || socket.disconnected) {
     socket = io(getWsOrigin(), {
       path: getSocketPath(),
-      auth: { token },
+      auth: { token, tenantKey },
       autoConnect: true,
       transports: ["websocket", "polling"],
     });

@@ -1,9 +1,11 @@
 import type { Channel } from "@prisma/client";
 import WebSocket from "ws";
 import type { Server } from "socket.io";
-import { prisma } from "../lib/prisma.js";
-import { ingestVoiceCallEvent } from "./voiceInbound.service.js";
+import { getPrisma } from "../lib/prisma.js";
+import { ensureConnection, listActiveTenants } from "../lib/tenantConnectionManager.js";
+import { runWithTenant } from "../lib/tenantContext.js";
 import { parseVoiceChannelConfig, type VoiceChannelConfig } from "../channels/voice/config.js";
+import { handleStasisEnd, handleStasisStart } from "./voice/voiceCallController.service.js";
 
 type AriaAny = Record<string, unknown>;
 
@@ -15,83 +17,32 @@ type ChannelRunner = {
 let runners: ChannelRunner[] = [];
 let started = false;
 
-function readPath(input: AriaAny | undefined, path: string): string | undefined {
-  if (!input) return undefined;
-  const segments = path.split(".");
-  let current: unknown = input;
-  for (const segment of segments) {
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[segment];
-  }
-  if (typeof current === "string") return current;
-  if (typeof current === "number") return String(current);
-  return undefined;
-}
-
 function toWsUrl(cfg: VoiceChannelConfig): string {
-  const base = cfg.ariBaseUrl.replace(/\/+$/, "");
+  const rawBase = cfg.ariBaseUrl.replace(/\/+$/, "");
+  const base =
+    rawBase.startsWith("https://")
+      ? `wss://${rawBase.slice("https://".length)}`
+      : rawBase.startsWith("http://")
+        ? `ws://${rawBase.slice("http://".length)}`
+        : rawBase;
   const url = new URL(`${base}/ari/events`);
   url.searchParams.set("app", cfg.ariApp);
   url.searchParams.set("api_key", `${cfg.ariUsername}:${cfg.ariPassword}`);
   return url.toString();
 }
 
-function inferCallState(eventType: string, payload: AriaAny): "ringing" | "active" | "hold" | "ended" | "unknown" {
-  if (eventType === "StasisStart") return "ringing";
-  if (eventType === "StasisEnd" || eventType === "ChannelDestroyed" || eventType === "ChannelHangupRequest") return "ended";
-  if (eventType === "ChannelStateChange") {
-    const state = String(readPath(payload, "channel.state") ?? "").toLowerCase();
-    if (state.includes("ring")) return "ringing";
-    if (state.includes("up")) return "active";
-    if (state.includes("hold")) return "hold";
-  }
-  return "unknown";
-}
-
-function inferDirection(payload: AriaAny): "inbound" | "outbound" {
-  const name = String(readPath(payload, "channel.name") ?? "").toLowerCase();
-  if (name.includes("dial") || name.includes("local/")) return "outbound";
-  return "inbound";
-}
-
-function extractCallId(payload: AriaAny): string | undefined {
-  return (
-    readPath(payload, "channel.id") ??
-    readPath(payload, "replace_channel.id") ??
-    readPath(payload, "bridge.id") ??
-    undefined
-  );
-}
-
 async function processAriEvent(io: Server | null, channel: Channel, cfg: VoiceChannelConfig, payload: AriaAny): Promise<void> {
   const eventType = String(payload.type ?? "");
   if (!eventType) return;
-  const state = inferCallState(eventType, payload);
-  if (state === "unknown") return;
 
-  const externalCallId = extractCallId(payload);
-  if (!externalCallId) return;
+  if (eventType === "StasisStart") {
+    await handleStasisStart(io, channel, cfg, payload);
+    return;
+  }
 
-  const callerNumber = readPath(payload, cfg.callerIdField) ?? readPath(payload, "channel.caller.number");
-  const dialedNumber = readPath(payload, cfg.dialedNumberField) ?? readPath(payload, "channel.dialplan.exten");
-  const callerName = readPath(payload, "channel.caller.name");
-  const timestampRaw = String(payload.timestamp ?? "");
-  const timestamp = timestampRaw ? new Date(timestampRaw) : new Date();
-
-  await ingestVoiceCallEvent(
-    {
-      channelId: channel.id,
-      externalCallId,
-      callerNumber,
-      dialedNumber,
-      callerName,
-      direction: inferDirection(payload),
-      state,
-      timestamp: Number.isNaN(timestamp.getTime()) ? new Date() : timestamp,
-      raw: payload,
-    },
-    io
-  );
+  if (eventType === "StasisEnd" || eventType === "ChannelDestroyed" || eventType === "ChannelHangupRequest") {
+    await handleStasisEnd(io, channel, payload);
+  }
 }
 
 function startChannelRunner(channel: Channel, io: Server | null): ChannelRunner | null {
@@ -113,7 +64,7 @@ function startChannelRunner(channel: Channel, io: Server | null): ChannelRunner 
     ws = new WebSocket(wsUrl);
 
     ws.on("open", () => {
-      console.log(`[voice] ARI connected for channel ${channel.name}`);
+      console.log(`[voice] ARI connected for channel ${channel.name} app=${cfg.ariApp}`);
     });
 
     ws.on("message", (raw) => {
@@ -156,19 +107,35 @@ export async function startVoiceAsteriskListeners(io: Server | null): Promise<vo
   if (started) return;
   started = true;
 
-  const channels = await prisma.channel.findMany({
-    where: { type: "VOICE", status: "active" },
-  });
-  if (channels.length === 0) {
-    console.log("[voice] No active VOICE channels found");
+  const tenants = await listActiveTenants();
+  if (tenants.length === 0) {
+    console.log("[voice] No active tenants found");
     return;
   }
 
-  runners = channels
-    .map((channel) => startChannelRunner(channel, io))
-    .filter((runner): runner is ChannelRunner => Boolean(runner));
+  for (const tenant of tenants) {
+    await runWithTenant(tenant.tenant_key, tenant.display_name, async () => {
+      await ensureConnection(tenant.tenant_key);
+      const channels = await getPrisma().channel.findMany({
+        where: { type: "VOICE", status: "active" },
+      });
+      for (const ch of channels) {
+        const runner = startChannelRunner(ch, io);
+        if (runner) runners.push(runner);
+      }
+    });
+  }
 
   console.log(`[voice] Voice listeners started (${runners.length} channels)`);
+}
+
+export async function reloadVoiceAsteriskListeners(io: Server | null): Promise<void> {
+  for (const runner of runners) {
+    runner.close();
+  }
+  runners = [];
+  started = false;
+  await startVoiceAsteriskListeners(io);
 }
 
 export async function stopVoiceAsteriskListeners(): Promise<void> {

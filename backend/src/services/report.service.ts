@@ -1,7 +1,7 @@
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
 
 export async function volumeReport(dateFrom: Date, dateTo: Date) {
-  const rows = await prisma.conversation.findMany({
+  const rows = await getPrisma().conversation.findMany({
     where: { created_at: { gte: dateFrom, lte: dateTo } },
     include: { channel: true },
   });
@@ -25,21 +25,21 @@ export async function summaryKpis(dateFrom: Date, dateTo: Date) {
   const range = { gte: dateFrom, lte: dateTo };
   const [total, resolved, abandoned, ahtAgg, convCsatAgg, resolvedSlaOk, resolvedSlaBad] =
     await Promise.all([
-      prisma.conversation.count({ where: { created_at: range } }),
-      prisma.conversation.count({ where: { created_at: range, status: "RESOLVED" } }),
-      prisma.conversation.count({ where: { created_at: range, status: "ABANDONED" } }),
-      prisma.conversation.aggregate({
+      getPrisma().conversation.count({ where: { created_at: range } }),
+      getPrisma().conversation.count({ where: { created_at: range, status: "RESOLVED" } }),
+      getPrisma().conversation.count({ where: { created_at: range, status: "ABANDONED" } }),
+      getPrisma().conversation.aggregate({
         where: { created_at: range, handle_time_seconds: { not: null } },
         _avg: { handle_time_seconds: true },
       }),
-      prisma.conversation.aggregate({
+      getPrisma().conversation.aggregate({
         where: { created_at: range, csat_score: { not: null } },
         _avg: { csat_score: true },
       }),
-      prisma.conversation.count({
+      getPrisma().conversation.count({
         where: { created_at: range, status: "RESOLVED", sla_breached: false },
       }),
-      prisma.conversation.count({
+      getPrisma().conversation.count({
         where: { created_at: range, status: "RESOLVED", sla_breached: true },
       }),
     ]);
@@ -56,7 +56,7 @@ export async function summaryKpis(dateFrom: Date, dateTo: Date) {
 }
 
 export async function hourlyVolumeReport(dateFrom: Date, dateTo: Date) {
-  const rows = await prisma.conversation.findMany({
+  const rows = await getPrisma().conversation.findMany({
     where: { created_at: { gte: dateFrom, lte: dateTo } },
     select: { created_at: true },
   });
@@ -76,11 +76,11 @@ export async function hourlyVolumeReport(dateFrom: Date, dateTo: Date) {
 export async function csatTrendReport(dateFrom: Date, dateTo: Date) {
   const range = { gte: dateFrom, lte: dateTo };
   const [evals, convRatings] = await Promise.all([
-    prisma.qualityEvaluation.findMany({
+    getPrisma().qualityEvaluation.findMany({
       where: { created_at: range },
       select: { score: true, created_at: true },
     }),
-    prisma.conversation.findMany({
+    getPrisma().conversation.findMany({
       where: { updated_at: range, csat_score: { not: null } },
       select: { csat_score: true, updated_at: true },
     }),
@@ -114,7 +114,7 @@ export async function csatTrendReport(dateFrom: Date, dateTo: Date) {
 
 export async function productivityReport(dateFrom: Date, dateTo: Date) {
   const range = { gte: dateFrom, lte: dateTo };
-  const users = await prisma.user.findMany({
+  const users = await getPrisma().user.findMany({
     include: {
       assignments: {
         where: { assigned_at: range },
@@ -176,8 +176,8 @@ export async function productivityReport(dateFrom: Date, dateTo: Date) {
 
 export async function slaReport(dateFrom: Date, dateTo: Date) {
   const range = { gte: dateFrom, lte: dateTo };
-  const queues = await prisma.queue.findMany({ select: { id: true, name: true, max_wait_seconds: true } });
-  const rows = await prisma.conversation.groupBy({
+  const queues = await getPrisma().queue.findMany({ select: { id: true, name: true, max_wait_seconds: true } });
+  const rows = await getPrisma().conversation.groupBy({
     by: ["queue_id", "sla_breached"],
     where: {
       created_at: range,
@@ -186,7 +186,7 @@ export async function slaReport(dateFrom: Date, dateTo: Date) {
     },
     _count: true,
   });
-  const waitAgg = await prisma.conversation.groupBy({
+  const waitAgg = await getPrisma().conversation.groupBy({
     by: ["queue_id"],
     where: { created_at: range, queue_id: { not: null }, wait_time_seconds: { not: null } },
     _avg: { wait_time_seconds: true },

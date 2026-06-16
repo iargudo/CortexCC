@@ -57,4 +57,46 @@ describe("rankAgentsByStrategy", () => {
     const ranked = rankAgentsByStrategy(agents, "PRIORITY_BASED");
     expect(ranked.map((a) => a.userId)).toEqual(["a3", "a1", "a2"]);
   });
+
+  it("returns empty array when no agents are eligible", () => {
+    expect(rankAgentsByStrategy([], "LEAST_BUSY")).toEqual([]);
+  });
+
+  it("does not mutate the original agents array", () => {
+    const copy = [...agents];
+    rankAgentsByStrategy(agents, "SKILL_BASED");
+    expect(agents).toEqual(copy);
+  });
+
+  it("breaks LEAST_BUSY ties by higher skill score", () => {
+    const tied: AgentScore[] = [
+      { ...agents[0], userId: "t1", activeCount: 1, skillScore: 3 },
+      { ...agents[0], userId: "t2", activeCount: 1, skillScore: 9 },
+    ];
+    const ranked = rankAgentsByStrategy(tied, "LEAST_BUSY");
+    expect(ranked.map((a) => a.userId)).toEqual(["t2", "t1"]);
+  });
+
+  it("prefers higher priority score in PRIORITY_BASED", () => {
+    const tied: AgentScore[] = [
+      { ...agents[1], userId: "low", priorityScore: 1, activeCount: 0, skillScore: 10 },
+      { ...agents[2], userId: "high", priorityScore: 2, activeCount: 0, skillScore: 1 },
+    ];
+    const ranked = rankAgentsByStrategy(tied, "PRIORITY_BASED");
+    expect(ranked[0].userId).toBe("high");
+  });
+
+  it("defaults unknown strategy to ROUND_ROBIN ordering", () => {
+    const ranked = rankAgentsByStrategy(agents, "ROUND_ROBIN");
+    expect(ranked.map((a) => a.userId)).toEqual(["a3", "a1", "a2"]);
+  });
+
+  it("handles null assignment timestamps in ROUND_ROBIN", () => {
+    const withNulls: AgentScore[] = [
+      { ...agents[0], userId: "n1", lastAssignedAt: null, activeCount: 0 },
+      { ...agents[1], userId: "n2", lastAssignedAt: d("2026-01-01T12:00:00.000Z"), activeCount: 0 },
+    ];
+    const ranked = rankAgentsByStrategy(withNulls, "ROUND_ROBIN");
+    expect(ranked[0].userId).toBe("n1");
+  });
 });

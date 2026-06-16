@@ -1,8 +1,12 @@
 # Vision funcional
 
+> Manual operativo para administradores: [09-manual-administrador.md](./09-manual-administrador.md)
+
 ## Objetivo del producto
 
 CortexCC es un contact center omnicanal para gestionar conversaciones de clientes en una sola operacion, con enrutamiento inteligente, supervision en tiempo real, control de calidad e integracion de voz SIP/WebRTC.
+
+La plataforma es **multi-tenant**: varias empresas comparten un despliegue; cada una accede por su URL y sus datos viven en una base de datos propia. Detalle tecnico: [ESTANDAR_ARQUITECTURA_MULTITENANT.md](./ESTANDAR_ARQUITECTURA_MULTITENANT.md).
 
 ## Perfiles y responsabilidades
 

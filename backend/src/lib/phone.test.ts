@@ -25,4 +25,24 @@ describe("canonicalPhone", () => {
     expect(canonicalPhone("0995906687")).toBe("593995906687");
     expect(canonicalPhone("995906687")).toBe("593995906687");
   });
+
+  it("keeps already canonical international numbers", () => {
+    expect(canonicalPhone("593995906687")).toBe("593995906687");
+  });
+
+  it("returns null for empty or invalid input", () => {
+    expect(canonicalPhone(null)).toBeNull();
+    expect(canonicalPhone("")).toBeNull();
+    expect(canonicalPhone("abc")).toBeNull();
+  });
+});
+
+describe("normalizePhone edge cases", () => {
+  it("strips international 00 prefix", () => {
+    expect(normalizePhone("00593995906687")).toBe("593995906687");
+  });
+
+  it("returns null for undefined input", () => {
+    expect(normalizePhone(undefined)).toBeNull();
+  });
 });

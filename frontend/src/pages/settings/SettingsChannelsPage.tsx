@@ -13,6 +13,25 @@ import { ChannelIcon } from "@/components/ChannelIcon";
 import type { ChannelType } from "@/data/mock";
 import { Plus, Edit2, Settings, Zap, Eye, Copy } from "lucide-react";
 import { apiJson, getApiBase } from "@/lib/api";
+import { buildWhatsAppWebhookUrl } from "@/lib/webhookUrls";
+import { VoiceChannelFields } from "@/components/settings/VoiceChannelFields";
+import { WhatsAppChannelFields } from "@/components/settings/WhatsAppChannelFields";
+import {
+  buildWhatsAppConfig,
+  defaultWhatsAppForm,
+  parseWhatsAppForm,
+  validateWhatsAppForm,
+  whatsAppProviderLabel,
+  type WhatsAppForm,
+} from "@/lib/whatsappChannelConfig";
+import {
+  buildVoiceConfig,
+  defaultVoiceForm,
+  parseVoiceForm,
+  type AriTestResult,
+  type VoiceForm,
+} from "@/lib/voiceChannelConfig";
+import type { TelephonySettingsView } from "@/lib/telephonySettings";
 
 type ApiChannel = {
   id: string;
@@ -20,23 +39,10 @@ type ApiChannel = {
   type: ChannelType;
   status: string;
   conversations_today: number;
+  whatsapp_provider?: string;
 };
 
 const TYPES: ChannelType[] = ["WHATSAPP", "EMAIL", "VOICE", "WEBCHAT", "TEAMS"];
-type WhatsAppProvider = "ultramsg" | "twilio" | "360dialog";
-type WhatsAppForm = {
-  provider: WhatsAppProvider;
-  ultraInstanceId: string;
-  ultraToken: string;
-  ultraBaseUrl: string;
-  twilioAccountSid: string;
-  twilioAuthToken: string;
-  twilioFrom: string;
-  twilioApiBaseUrl: string;
-  dialogApiKey: string;
-  dialogPhoneNumberId: string;
-  dialogBaseUrl: string;
-};
 type EmailForm = {
   smtpHost: string;
   smtpPort: string;
@@ -55,75 +61,6 @@ type EmailForm = {
   subjectFilterMode: "contains" | "equals" | "regex";
   subjectFilterValue: string;
 };
-type VoiceForm = {
-  ariBaseUrl: string;
-  ariApp: string;
-  ariUsername: string;
-  ariPassword: string;
-  extensionField: string;
-  callerIdField: string;
-  dialedNumberField: string;
-  pollFallbackSec: string;
-};
-
-const defaultWhatsAppForm = (): WhatsAppForm => ({
-  provider: "ultramsg",
-  ultraInstanceId: "",
-  ultraToken: "",
-  ultraBaseUrl: "https://api.ultramsg.com",
-  twilioAccountSid: "",
-  twilioAuthToken: "",
-  twilioFrom: "",
-  twilioApiBaseUrl: "https://api.twilio.com",
-  dialogApiKey: "",
-  dialogPhoneNumberId: "",
-  dialogBaseUrl: "https://waba-v2.360dialog.io",
-});
-
-function parseWhatsAppForm(config: unknown): WhatsAppForm {
-  const form = defaultWhatsAppForm();
-  const c = (config ?? {}) as Record<string, unknown>;
-  const provider = String(c.provider ?? "ultramsg") as WhatsAppProvider;
-  form.provider = provider === "twilio" || provider === "360dialog" ? provider : "ultramsg";
-  form.ultraInstanceId = String(c.instanceId ?? "");
-  form.ultraToken = String(c.token ?? "");
-  form.ultraBaseUrl = String(c.baseUrl ?? form.ultraBaseUrl);
-  form.twilioAccountSid = String(c.accountSid ?? "");
-  form.twilioAuthToken = String(c.authToken ?? "");
-  form.twilioFrom = String(c.from ?? "");
-  form.twilioApiBaseUrl = String(c.apiBaseUrl ?? form.twilioApiBaseUrl);
-  form.dialogApiKey = String(c.apiKey ?? "");
-  form.dialogPhoneNumberId = String(c.phoneNumberId ?? "");
-  form.dialogBaseUrl = String(c.baseUrl ?? form.dialogBaseUrl);
-  return form;
-}
-
-function buildWhatsAppConfig(form: WhatsAppForm): object {
-  if (form.provider === "ultramsg") {
-    return {
-      provider: "ultramsg",
-      instanceId: form.ultraInstanceId.trim(),
-      token: form.ultraToken.trim(),
-      baseUrl: form.ultraBaseUrl.trim() || "https://api.ultramsg.com",
-    };
-  }
-  if (form.provider === "twilio") {
-    return {
-      provider: "twilio",
-      accountSid: form.twilioAccountSid.trim(),
-      authToken: form.twilioAuthToken.trim(),
-      from: form.twilioFrom.trim(),
-      apiBaseUrl: form.twilioApiBaseUrl.trim() || "https://api.twilio.com",
-    };
-  }
-  return {
-    provider: "360dialog",
-    apiKey: form.dialogApiKey.trim(),
-    phoneNumberId: form.dialogPhoneNumberId.trim() || undefined,
-    baseUrl: form.dialogBaseUrl.trim() || "https://waba-v2.360dialog.io",
-  };
-}
-
 const defaultEmailForm = (): EmailForm => ({
   smtpHost: "",
   smtpPort: "587",
@@ -188,43 +125,139 @@ function buildEmailConfig(form: EmailForm): object {
   };
 }
 
-const defaultVoiceForm = (): VoiceForm => ({
-  ariBaseUrl: "http://localhost:8088",
-  ariApp: "cortexcc",
-  ariUsername: "",
-  ariPassword: "",
-  extensionField: "endpoint",
-  callerIdField: "caller.number",
-  dialedNumberField: "dialplan.exten",
-  pollFallbackSec: "15",
-});
-
-function parseVoiceForm(config: unknown): VoiceForm {
-  const form = defaultVoiceForm();
-  const c = (config ?? {}) as Record<string, unknown>;
-  form.ariBaseUrl = String(c.ariBaseUrl ?? form.ariBaseUrl);
-  form.ariApp = String(c.ariApp ?? form.ariApp);
-  form.ariUsername = String(c.ariUsername ?? "");
-  form.ariPassword = String(c.ariPassword ?? "");
-  form.extensionField = String(c.extensionField ?? form.extensionField);
-  form.callerIdField = String(c.callerIdField ?? form.callerIdField);
-  form.dialedNumberField = String(c.dialedNumberField ?? form.dialedNumberField);
-  form.pollFallbackSec = String(c.pollFallbackSec ?? form.pollFallbackSec);
-  return form;
+function channelConfigLabel(type: ChannelType): string {
+  if (type === "WHATSAPP") return "Configuración WhatsApp";
+  if (type === "VOICE") return "Configuración de voz";
+  if (type === "EMAIL") return "Configuración de email";
+  return "Config (JSON)";
 }
 
-function buildVoiceConfig(form: VoiceForm): object {
-  return {
-    provider: "asterisk_ari",
-    ariBaseUrl: form.ariBaseUrl.trim(),
-    ariApp: form.ariApp.trim(),
-    ariUsername: form.ariUsername.trim(),
-    ariPassword: form.ariPassword,
-    extensionField: form.extensionField.trim() || "endpoint",
-    callerIdField: form.callerIdField.trim() || "caller.number",
-    dialedNumberField: form.dialedNumberField.trim() || "dialplan.exten",
-    pollFallbackSec: Number(form.pollFallbackSec || "15"),
-  };
+function channelDialogClassName(type: ChannelType): string {
+  if (type === "VOICE") return "sm:max-w-2xl max-h-[90vh] overflow-y-auto";
+  if (type === "WHATSAPP") return "sm:max-w-lg max-h-[90vh] overflow-y-auto";
+  return "sm:max-w-md";
+}
+
+function EmailChannelFields({
+  form,
+  onChange,
+}: {
+  form: EmailForm;
+  onChange: (patch: Partial<EmailForm>) => void;
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+      <Label className="text-xs font-semibold md:col-span-2">SMTP (salida)</Label>
+      <Input placeholder="smtp.gmail.com" value={form.smtpHost} onChange={(e) => onChange({ smtpHost: e.target.value })} className="h-8 text-sm" />
+      <Input placeholder="587" value={form.smtpPort} onChange={(e) => onChange({ smtpPort: e.target.value })} className="h-8 text-sm" />
+      <Select value={form.smtpSecure} onValueChange={(v) => onChange({ smtpSecure: v as "true" | "false" })}>
+        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="SMTP Secure" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="false">STARTTLS (false)</SelectItem>
+          <SelectItem value="true">SSL/TLS (true)</SelectItem>
+        </SelectContent>
+      </Select>
+      <Input placeholder="usuario SMTP" value={form.smtpUser} onChange={(e) => onChange({ smtpUser: e.target.value })} className="h-8 text-sm" />
+      <Input placeholder="password SMTP" value={form.smtpPass} onChange={(e) => onChange({ smtpPass: e.target.value })} className="h-8 text-sm" type="password" />
+      <Input placeholder="from@dominio.com (opcional)" value={form.fromEmail} onChange={(e) => onChange({ fromEmail: e.target.value })} className="h-8 text-sm" />
+      <Input placeholder="Nombre remitente (opcional)" value={form.fromName} onChange={(e) => onChange({ fromName: e.target.value })} className="h-8 text-sm" />
+      <Label className="text-xs font-semibold pt-2 md:col-span-2">IMAP (entrada)</Label>
+      <Input placeholder="imap.gmail.com" value={form.imapHost} onChange={(e) => onChange({ imapHost: e.target.value })} className="h-8 text-sm" />
+      <Input placeholder="993" value={form.imapPort} onChange={(e) => onChange({ imapPort: e.target.value })} className="h-8 text-sm" />
+      <Select value={form.imapSecure} onValueChange={(v) => onChange({ imapSecure: v as "true" | "false" })}>
+        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="IMAP Secure" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="true">SSL/TLS (true)</SelectItem>
+          <SelectItem value="false">Plain/STARTTLS (false)</SelectItem>
+        </SelectContent>
+      </Select>
+      <Input placeholder="usuario IMAP" value={form.imapUser} onChange={(e) => onChange({ imapUser: e.target.value })} className="h-8 text-sm" />
+      <Input placeholder="password IMAP" value={form.imapPass} onChange={(e) => onChange({ imapPass: e.target.value })} className="h-8 text-sm" type="password" />
+      <Input placeholder="INBOX" value={form.imapMailbox} onChange={(e) => onChange({ imapMailbox: e.target.value })} className="h-8 text-sm" />
+      <Input
+        placeholder="Intervalo polling (segundos)"
+        value={form.pollIntervalSec}
+        onChange={(e) => onChange({ pollIntervalSec: e.target.value })}
+        className="h-8 text-sm md:col-span-2"
+      />
+      <Label className="text-xs font-semibold pt-2 md:col-span-2">Filtro de Subject (opcional)</Label>
+      <Select
+        value={form.subjectFilterMode}
+        onValueChange={(v) => onChange({ subjectFilterMode: v as "contains" | "equals" | "regex" })}
+      >
+        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Modo filtro subject" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="contains">Contiene</SelectItem>
+          <SelectItem value="equals">Igual a</SelectItem>
+          <SelectItem value="regex">Regex</SelectItem>
+        </SelectContent>
+      </Select>
+      <Input
+        placeholder='Ej: "Ticket #" o "^INC-[0-9]+$"'
+        value={form.subjectFilterValue}
+        onChange={(e) => onChange({ subjectFilterValue: e.target.value })}
+        className="h-8 text-sm md:col-span-2"
+      />
+    </div>
+  );
+}
+
+function ChannelConfigSection({
+  channelType,
+  channelId,
+  waForm,
+  onWaFormChange,
+  emailForm,
+  onEmailFormChange,
+  voiceForm,
+  onVoiceFormChange,
+  cConfig,
+  onCConfigChange,
+  onTestAri,
+  ariTestPending,
+  ariTestResult,
+  derivedAriBaseUrl,
+}: {
+  channelType: ChannelType;
+  channelId?: string;
+  waForm: WhatsAppForm;
+  onWaFormChange: (patch: Partial<WhatsAppForm> | ((prev: WhatsAppForm) => WhatsAppForm)) => void;
+  emailForm: EmailForm;
+  onEmailFormChange: (patch: Partial<EmailForm>) => void;
+  voiceForm: VoiceForm;
+  onVoiceFormChange: (patch: Partial<VoiceForm>) => void;
+  cConfig: string;
+  onCConfigChange: (value: string) => void;
+  onTestAri?: () => void;
+  ariTestPending?: boolean;
+  ariTestResult?: AriTestResult | null;
+  derivedAriBaseUrl?: string;
+}) {
+  return (
+    <div>
+      <Label className="text-xs">{channelConfigLabel(channelType)}</Label>
+      {channelType === "WHATSAPP" ? (
+        <WhatsAppChannelFields form={waForm} onChange={onWaFormChange} channelId={channelId} />
+      ) : channelType === "EMAIL" ? (
+        <EmailChannelFields form={emailForm} onChange={onEmailFormChange} />
+      ) : channelType === "VOICE" ? (
+        <VoiceChannelFields
+          form={voiceForm}
+          onChange={onVoiceFormChange}
+          onTestAri={onTestAri}
+          ariTestPending={ariTestPending}
+          ariTestResult={ariTestResult}
+          derivedAriBaseUrl={derivedAriBaseUrl}
+        />
+      ) : (
+        <Textarea
+          value={cConfig}
+          onChange={(e) => onCConfigChange(e.target.value)}
+          className="min-h-[120px] text-xs font-mono"
+        />
+      )}
+    </div>
+  );
 }
 
 export default function SettingsChannelsPage() {
@@ -240,33 +273,84 @@ export default function SettingsChannelsPage() {
   const [waForm, setWaForm] = useState<WhatsAppForm>(defaultWhatsAppForm());
   const [emailForm, setEmailForm] = useState<EmailForm>(defaultEmailForm());
   const [voiceForm, setVoiceForm] = useState<VoiceForm>(defaultVoiceForm());
+  const [ariTestResult, setAriTestResult] = useState<AriTestResult | null>(null);
 
   const { data: channels = [], isLoading, error } = useQuery({
     queryKey: ["settings", "channels"],
     queryFn: () => apiJson<ApiChannel[]>("/settings/channels"),
   });
 
+  const { data: telephony } = useQuery({
+    queryKey: ["settings", "telephony"],
+    queryFn: () => apiJson<TelephonySettingsView>("/settings/telephony"),
+  });
+
+  const derivedAriBaseUrl = telephony?.derived.ariBaseUrl || undefined;
+
   const invalidate = () => void qc.invalidateQueries({ queryKey: ["settings", "channels"] });
 
   const testMut = useMutation({
-    mutationFn: (id: string) => apiJson<{ ok: boolean; detail?: string }>(`/settings/channels/${id}/test`, { method: "POST" }),
+    mutationFn: (id: string) =>
+      apiJson<{ ok: boolean; detail?: string; warnings?: string[] }>(`/settings/channels/${id}/test`, { method: "POST" }),
     onSuccess: (r) => {
-      toast.success(r.ok ? "Canal OK" : "Revisar canal");
-      if (r.detail) toast.message(r.detail);
+      if (r.ok) {
+        toast.success(r.detail ?? "Canal OK");
+        r.warnings?.forEach((warning) => toast.warning(warning));
+      } else {
+        toast.error(r.detail ?? "Revisar canal");
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const testVoiceAriMut = useMutation({
+    mutationFn: () => {
+      const ariUrl = derivedAriBaseUrl ?? voiceForm.ariBaseUrl;
+      return apiJson<AriTestResult>("/settings/channels/voice/test", {
+        method: "POST",
+        body: JSON.stringify({
+          config: buildVoiceConfig({ ...voiceForm, ariBaseUrl: ariUrl }),
+        }),
+      });
+    },
+    onSuccess: (r) => {
+      setAriTestResult(r);
+      if (r.ok) {
+        toast.success(r.detail ?? "Conexión ARI correcta");
+        r.warnings?.forEach((warning) => toast.warning(warning));
+      } else {
+        toast.error(r.detail ?? "Error de conexión ARI");
+      }
+    },
+    onError: (e: Error) => {
+      setAriTestResult({ ok: false, detail: e.message });
+      toast.error(e.message);
+    },
+  });
+
+  const runVoiceAriTest = () => {
+    const ariUrl = derivedAriBaseUrl ?? voiceForm.ariBaseUrl;
+    if (!ariUrl.trim() || !voiceForm.ariUsername.trim() || !voiceForm.ariPassword.trim()) {
+      toast.error("Completa URL ARI (o host PBX en Telefonía), usuario y contraseña antes de probar");
+      return;
+    }
+    setAriTestResult(null);
+    testVoiceAriMut.mutate();
+  };
 
   const updateMut = useMutation({
     mutationFn: async () => {
       if (!editing) return;
       let config: object;
       if (editing.type === "WHATSAPP") {
+        const waError = validateWhatsAppForm(waForm);
+        if (waError) throw new Error(waError);
         config = buildWhatsAppConfig(waForm);
       } else if (editing.type === "EMAIL") {
         config = buildEmailConfig(emailForm);
       } else if (editing.type === "VOICE") {
-        config = buildVoiceConfig(voiceForm);
+        const ariUrl = derivedAriBaseUrl ?? voiceForm.ariBaseUrl;
+        config = buildVoiceConfig({ ...voiceForm, ariBaseUrl: ariUrl });
       } else {
         try {
           config = JSON.parse(cConfig || "{}") as object;
@@ -291,11 +375,14 @@ export default function SettingsChannelsPage() {
     mutationFn: async () => {
       let config: object;
       if (cType === "WHATSAPP") {
+        const waError = validateWhatsAppForm(waForm);
+        if (waError) throw new Error(waError);
         config = buildWhatsAppConfig(waForm);
       } else if (cType === "EMAIL") {
         config = buildEmailConfig(emailForm);
       } else if (cType === "VOICE") {
-        config = buildVoiceConfig(voiceForm);
+        const ariUrl = derivedAriBaseUrl ?? voiceForm.ariBaseUrl;
+        config = buildVoiceConfig({ ...voiceForm, ariBaseUrl: ariUrl });
       } else {
         try {
           config = JSON.parse(cConfig || "{}") as object;
@@ -332,7 +419,11 @@ export default function SettingsChannelsPage() {
   };
 
   const copyWhatsAppWebhook = async (channelId: string) => {
-    const webhookUrl = `${getApiBase()}/webhooks/whatsapp/${channelId}`;
+    const webhookUrl = buildWhatsAppWebhookUrl(channelId);
+    if (!webhookUrl) {
+      toast.error("No se pudo construir el webhook (tenant no resuelto)");
+      return;
+    }
     try {
       await navigator.clipboard.writeText(webhookUrl);
       toast.success("Webhook copiado");
@@ -430,6 +521,7 @@ export default function SettingsChannelsPage() {
                     onClick={() => {
                       void (async () => {
                         setEditing(ch);
+                        setAriTestResult(null);
                         setCName(ch.name);
                         setCStatus(ch.status);
                         try {
@@ -455,6 +547,12 @@ export default function SettingsChannelsPage() {
               </div>
               <p className="mt-2 text-[11px] text-muted-foreground">
                 ID: <span className="font-mono text-foreground">{ch.id}</span>
+                {ch.type === "WHATSAPP" && (
+                  <>
+                    {" "}
+                    · Proveedor: <span className="text-foreground">{whatsAppProviderLabel(ch.whatsapp_provider)}</span>
+                  </>
+                )}
               </p>
             </CardContent>
           </Card>
@@ -500,7 +598,7 @@ export default function SettingsChannelsPage() {
       </Dialog>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className={editing ? channelDialogClassName(editing.type) : "sm:max-w-md"}>
           <DialogHeader>
             <DialogTitle>Configurar canal</DialogTitle>
           </DialogHeader>
@@ -526,243 +624,25 @@ export default function SettingsChannelsPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label className="text-xs">Config (JSON)</Label>
-                {editing.type === "WHATSAPP" ? (
-                  <div className="space-y-3">
-                    <div>
-                      <Label className="text-xs">Proveedor</Label>
-                      <Select
-                        value={waForm.provider}
-                        onValueChange={(v) =>
-                          setWaForm((prev) => ({
-                            ...prev,
-                            provider: v as WhatsAppProvider,
-                          }))
-                        }
-                      >
-                        <SelectTrigger className="h-8 text-sm">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="ultramsg">UltraMsg</SelectItem>
-                          <SelectItem value="twilio">Twilio</SelectItem>
-                          <SelectItem value="360dialog">360Dialog</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {waForm.provider === "ultramsg" && (
-                      <>
-                        <div>
-                          <Label className="text-xs">Instance ID</Label>
-                          <Input
-                            value={waForm.ultraInstanceId}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, ultraInstanceId: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Token</Label>
-                          <Input
-                            value={waForm.ultraToken}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, ultraToken: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Base URL</Label>
-                          <Input
-                            value={waForm.ultraBaseUrl}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, ultraBaseUrl: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                      </>
-                    )}
-
-                    {waForm.provider === "twilio" && (
-                      <>
-                        <div>
-                          <Label className="text-xs">Account SID</Label>
-                          <Input
-                            value={waForm.twilioAccountSid}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, twilioAccountSid: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Auth Token</Label>
-                          <Input
-                            value={waForm.twilioAuthToken}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, twilioAuthToken: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">From (whatsapp:+...)</Label>
-                          <Input
-                            value={waForm.twilioFrom}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, twilioFrom: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">API Base URL</Label>
-                          <Input
-                            value={waForm.twilioApiBaseUrl}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, twilioApiBaseUrl: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                      </>
-                    )}
-
-                    {waForm.provider === "360dialog" && (
-                      <>
-                        <div>
-                          <Label className="text-xs">API Key</Label>
-                          <Input
-                            value={waForm.dialogApiKey}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, dialogApiKey: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Phone Number ID (opcional)</Label>
-                          <Input
-                            value={waForm.dialogPhoneNumberId}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, dialogPhoneNumberId: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Base URL</Label>
-                          <Input
-                            value={waForm.dialogBaseUrl}
-                            onChange={(e) => setWaForm((prev) => ({ ...prev, dialogBaseUrl: e.target.value }))}
-                            className="h-8 text-sm"
-                          />
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    {editing.type === "EMAIL" ? (
-                      <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                        <Label className="text-xs font-semibold md:col-span-2">SMTP (salida)</Label>
-                        <Input placeholder="smtp.gmail.com" value={emailForm.smtpHost} onChange={(e) => setEmailForm((p) => ({ ...p, smtpHost: e.target.value }))} className="h-8 text-sm" />
-                        <Input placeholder="587" value={emailForm.smtpPort} onChange={(e) => setEmailForm((p) => ({ ...p, smtpPort: e.target.value }))} className="h-8 text-sm" />
-                        <Select value={emailForm.smtpSecure} onValueChange={(v) => setEmailForm((p) => ({ ...p, smtpSecure: v as "true" | "false" }))}>
-                          <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="SMTP Secure" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="false">STARTTLS (false)</SelectItem>
-                            <SelectItem value="true">SSL/TLS (true)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Input placeholder="usuario SMTP" value={emailForm.smtpUser} onChange={(e) => setEmailForm((p) => ({ ...p, smtpUser: e.target.value }))} className="h-8 text-sm" />
-                        <Input placeholder="password SMTP" value={emailForm.smtpPass} onChange={(e) => setEmailForm((p) => ({ ...p, smtpPass: e.target.value }))} className="h-8 text-sm" type="password" />
-                        <Input placeholder="from@dominio.com (opcional)" value={emailForm.fromEmail} onChange={(e) => setEmailForm((p) => ({ ...p, fromEmail: e.target.value }))} className="h-8 text-sm" />
-                        <Input placeholder="Nombre remitente (opcional)" value={emailForm.fromName} onChange={(e) => setEmailForm((p) => ({ ...p, fromName: e.target.value }))} className="h-8 text-sm" />
-                        <Label className="text-xs font-semibold pt-2 md:col-span-2">IMAP (entrada)</Label>
-                        <Input placeholder="imap.gmail.com" value={emailForm.imapHost} onChange={(e) => setEmailForm((p) => ({ ...p, imapHost: e.target.value }))} className="h-8 text-sm" />
-                        <Input placeholder="993" value={emailForm.imapPort} onChange={(e) => setEmailForm((p) => ({ ...p, imapPort: e.target.value }))} className="h-8 text-sm" />
-                        <Select value={emailForm.imapSecure} onValueChange={(v) => setEmailForm((p) => ({ ...p, imapSecure: v as "true" | "false" }))}>
-                          <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="IMAP Secure" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="true">SSL/TLS (true)</SelectItem>
-                            <SelectItem value="false">Plain/STARTTLS (false)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Input placeholder="usuario IMAP" value={emailForm.imapUser} onChange={(e) => setEmailForm((p) => ({ ...p, imapUser: e.target.value }))} className="h-8 text-sm" />
-                        <Input placeholder="password IMAP" value={emailForm.imapPass} onChange={(e) => setEmailForm((p) => ({ ...p, imapPass: e.target.value }))} className="h-8 text-sm" type="password" />
-                        <Input placeholder="INBOX" value={emailForm.imapMailbox} onChange={(e) => setEmailForm((p) => ({ ...p, imapMailbox: e.target.value }))} className="h-8 text-sm" />
-                        <Input
-                          placeholder="Intervalo polling (segundos)"
-                          value={emailForm.pollIntervalSec}
-                          onChange={(e) => setEmailForm((p) => ({ ...p, pollIntervalSec: e.target.value }))}
-                          className="h-8 text-sm md:col-span-2"
-                        />
-                        <Label className="text-xs font-semibold pt-2 md:col-span-2">Filtro de Subject (opcional)</Label>
-                        <Select
-                          value={emailForm.subjectFilterMode}
-                          onValueChange={(v) => setEmailForm((p) => ({ ...p, subjectFilterMode: v as "contains" | "equals" | "regex" }))}
-                        >
-                          <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Modo filtro subject" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="contains">Contiene</SelectItem>
-                            <SelectItem value="equals">Igual a</SelectItem>
-                            <SelectItem value="regex">Regex</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Input
-                          placeholder='Ej: "Ticket #" o "^INC-[0-9]+$"'
-                          value={emailForm.subjectFilterValue}
-                          onChange={(e) => setEmailForm((p) => ({ ...p, subjectFilterValue: e.target.value }))}
-                          className="h-8 text-sm md:col-span-2"
-                        />
-                      </div>
-                    ) : editing.type === "VOICE" ? (
-                      <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                        <Label className="text-xs font-semibold md:col-span-2">Asterisk ARI</Label>
-                        <Input
-                          placeholder="http://localhost:8088"
-                          value={voiceForm.ariBaseUrl}
-                          onChange={(e) => setVoiceForm((p) => ({ ...p, ariBaseUrl: e.target.value }))}
-                          className="h-8 text-sm md:col-span-2"
-                        />
-                        <Input
-                          placeholder="ARI App (ej: cortexcc)"
-                          value={voiceForm.ariApp}
-                          onChange={(e) => setVoiceForm((p) => ({ ...p, ariApp: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                        <Input
-                          placeholder="Usuario ARI"
-                          value={voiceForm.ariUsername}
-                          onChange={(e) => setVoiceForm((p) => ({ ...p, ariUsername: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                        <Input
-                          placeholder="Password ARI"
-                          type="password"
-                          value={voiceForm.ariPassword}
-                          onChange={(e) => setVoiceForm((p) => ({ ...p, ariPassword: e.target.value }))}
-                          className="h-8 text-sm md:col-span-2"
-                        />
-                        <Label className="text-xs font-semibold pt-2 md:col-span-2">Mapeo de evento</Label>
-                        <Input
-                          placeholder="caller.number"
-                          value={voiceForm.callerIdField}
-                          onChange={(e) => setVoiceForm((p) => ({ ...p, callerIdField: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                        <Input
-                          placeholder="dialplan.exten"
-                          value={voiceForm.dialedNumberField}
-                          onChange={(e) => setVoiceForm((p) => ({ ...p, dialedNumberField: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                        <Input
-                          placeholder="endpoint"
-                          value={voiceForm.extensionField}
-                          onChange={(e) => setVoiceForm((p) => ({ ...p, extensionField: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                        <Input
-                          placeholder="Reintento WS (segundos)"
-                          value={voiceForm.pollFallbackSec}
-                          onChange={(e) => setVoiceForm((p) => ({ ...p, pollFallbackSec: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                    ) : (
-                      <Textarea value={cConfig} onChange={(e) => setCConfig(e.target.value)} className="min-h-[120px] text-xs font-mono" />
-                    )}
-                  </>
-                )}
-              </div>
+              <ChannelConfigSection
+                channelType={editing.type}
+                channelId={editing.id}
+                waForm={waForm}
+                onWaFormChange={setWaForm}
+                emailForm={emailForm}
+                onEmailFormChange={(patch) => setEmailForm((p) => ({ ...p, ...patch }))}
+                voiceForm={voiceForm}
+                onVoiceFormChange={(patch) => {
+                  setVoiceForm((p) => ({ ...p, ...patch }));
+                  setAriTestResult(null);
+                }}
+                cConfig={cConfig}
+                onCConfigChange={setCConfig}
+                onTestAri={runVoiceAriTest}
+                ariTestPending={testVoiceAriMut.isPending}
+                ariTestResult={ariTestResult}
+                derivedAriBaseUrl={derivedAriBaseUrl}
+              />
             </div>
           )}
           <DialogFooter>
@@ -777,7 +657,7 @@ export default function SettingsChannelsPage() {
       </Dialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className={channelDialogClassName(cType)}>
           <DialogHeader>
             <DialogTitle>Nuevo canal</DialogTitle>
           </DialogHeader>
@@ -795,7 +675,10 @@ export default function SettingsChannelsPage() {
                   setCType(nextType);
                   if (nextType === "WHATSAPP") setWaForm(defaultWhatsAppForm());
                   if (nextType === "EMAIL") setEmailForm(defaultEmailForm());
-                  if (nextType === "VOICE") setVoiceForm(defaultVoiceForm());
+                  if (nextType === "VOICE") {
+                    setVoiceForm(defaultVoiceForm());
+                    setAriTestResult(null);
+                  }
                 }}
               >
                 <SelectTrigger className="h-8 text-sm">
@@ -822,243 +705,24 @@ export default function SettingsChannelsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label className="text-xs">Config (JSON)</Label>
-              {cType === "WHATSAPP" ? (
-                <div className="space-y-3">
-                  <div>
-                    <Label className="text-xs">Proveedor</Label>
-                    <Select
-                      value={waForm.provider}
-                      onValueChange={(v) =>
-                        setWaForm((prev) => ({
-                          ...prev,
-                          provider: v as WhatsAppProvider,
-                        }))
-                      }
-                    >
-                      <SelectTrigger className="h-8 text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ultramsg">UltraMsg</SelectItem>
-                        <SelectItem value="twilio">Twilio</SelectItem>
-                        <SelectItem value="360dialog">360Dialog</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {waForm.provider === "ultramsg" && (
-                    <>
-                      <div>
-                        <Label className="text-xs">Instance ID</Label>
-                        <Input
-                          value={waForm.ultraInstanceId}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, ultraInstanceId: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Token</Label>
-                        <Input
-                          value={waForm.ultraToken}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, ultraToken: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Base URL</Label>
-                        <Input
-                          value={waForm.ultraBaseUrl}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, ultraBaseUrl: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {waForm.provider === "twilio" && (
-                    <>
-                      <div>
-                        <Label className="text-xs">Account SID</Label>
-                        <Input
-                          value={waForm.twilioAccountSid}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, twilioAccountSid: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Auth Token</Label>
-                        <Input
-                          value={waForm.twilioAuthToken}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, twilioAuthToken: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">From (whatsapp:+...)</Label>
-                        <Input
-                          value={waForm.twilioFrom}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, twilioFrom: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">API Base URL</Label>
-                        <Input
-                          value={waForm.twilioApiBaseUrl}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, twilioApiBaseUrl: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {waForm.provider === "360dialog" && (
-                    <>
-                      <div>
-                        <Label className="text-xs">API Key</Label>
-                        <Input
-                          value={waForm.dialogApiKey}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, dialogApiKey: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Phone Number ID (opcional)</Label>
-                        <Input
-                          value={waForm.dialogPhoneNumberId}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, dialogPhoneNumberId: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Base URL</Label>
-                        <Input
-                          value={waForm.dialogBaseUrl}
-                          onChange={(e) => setWaForm((prev) => ({ ...prev, dialogBaseUrl: e.target.value }))}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                    </>
-                  )}
-                </div>
-              ) : (
-                <>
-                  {cType === "EMAIL" ? (
-                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                      <Label className="text-xs font-semibold md:col-span-2">SMTP (salida)</Label>
-                      <Input placeholder="smtp.gmail.com" value={emailForm.smtpHost} onChange={(e) => setEmailForm((p) => ({ ...p, smtpHost: e.target.value }))} className="h-8 text-sm" />
-                      <Input placeholder="587" value={emailForm.smtpPort} onChange={(e) => setEmailForm((p) => ({ ...p, smtpPort: e.target.value }))} className="h-8 text-sm" />
-                      <Select value={emailForm.smtpSecure} onValueChange={(v) => setEmailForm((p) => ({ ...p, smtpSecure: v as "true" | "false" }))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="SMTP Secure" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="false">STARTTLS (false)</SelectItem>
-                          <SelectItem value="true">SSL/TLS (true)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Input placeholder="usuario SMTP" value={emailForm.smtpUser} onChange={(e) => setEmailForm((p) => ({ ...p, smtpUser: e.target.value }))} className="h-8 text-sm" />
-                      <Input placeholder="password SMTP" value={emailForm.smtpPass} onChange={(e) => setEmailForm((p) => ({ ...p, smtpPass: e.target.value }))} className="h-8 text-sm" type="password" />
-                      <Input placeholder="from@dominio.com (opcional)" value={emailForm.fromEmail} onChange={(e) => setEmailForm((p) => ({ ...p, fromEmail: e.target.value }))} className="h-8 text-sm" />
-                      <Input placeholder="Nombre remitente (opcional)" value={emailForm.fromName} onChange={(e) => setEmailForm((p) => ({ ...p, fromName: e.target.value }))} className="h-8 text-sm" />
-                      <Label className="text-xs font-semibold pt-2 md:col-span-2">IMAP (entrada)</Label>
-                      <Input placeholder="imap.gmail.com" value={emailForm.imapHost} onChange={(e) => setEmailForm((p) => ({ ...p, imapHost: e.target.value }))} className="h-8 text-sm" />
-                      <Input placeholder="993" value={emailForm.imapPort} onChange={(e) => setEmailForm((p) => ({ ...p, imapPort: e.target.value }))} className="h-8 text-sm" />
-                      <Select value={emailForm.imapSecure} onValueChange={(v) => setEmailForm((p) => ({ ...p, imapSecure: v as "true" | "false" }))}>
-                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="IMAP Secure" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="true">SSL/TLS (true)</SelectItem>
-                          <SelectItem value="false">Plain/STARTTLS (false)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Input placeholder="usuario IMAP" value={emailForm.imapUser} onChange={(e) => setEmailForm((p) => ({ ...p, imapUser: e.target.value }))} className="h-8 text-sm" />
-                      <Input placeholder="password IMAP" value={emailForm.imapPass} onChange={(e) => setEmailForm((p) => ({ ...p, imapPass: e.target.value }))} className="h-8 text-sm" type="password" />
-                      <Input placeholder="INBOX" value={emailForm.imapMailbox} onChange={(e) => setEmailForm((p) => ({ ...p, imapMailbox: e.target.value }))} className="h-8 text-sm" />
-                      <Input
-                        placeholder="Intervalo polling (segundos)"
-                        value={emailForm.pollIntervalSec}
-                        onChange={(e) => setEmailForm((p) => ({ ...p, pollIntervalSec: e.target.value }))}
-                        className="h-8 text-sm md:col-span-2"
-                      />
-                      <Label className="text-xs font-semibold pt-2 md:col-span-2">Filtro de Subject (opcional)</Label>
-                      <Select
-                        value={emailForm.subjectFilterMode}
-                        onValueChange={(v) => setEmailForm((p) => ({ ...p, subjectFilterMode: v as "contains" | "equals" | "regex" }))}
-                      >
-                        <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Modo filtro subject" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="contains">Contiene</SelectItem>
-                          <SelectItem value="equals">Igual a</SelectItem>
-                          <SelectItem value="regex">Regex</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        placeholder='Ej: "Ticket #" o "^INC-[0-9]+$"'
-                        value={emailForm.subjectFilterValue}
-                        onChange={(e) => setEmailForm((p) => ({ ...p, subjectFilterValue: e.target.value }))}
-                        className="h-8 text-sm md:col-span-2"
-                      />
-                    </div>
-                  ) : cType === "VOICE" ? (
-                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                      <Label className="text-xs font-semibold md:col-span-2">Asterisk ARI</Label>
-                      <Input
-                        placeholder="http://localhost:8088"
-                        value={voiceForm.ariBaseUrl}
-                        onChange={(e) => setVoiceForm((p) => ({ ...p, ariBaseUrl: e.target.value }))}
-                        className="h-8 text-sm md:col-span-2"
-                      />
-                      <Input
-                        placeholder="ARI App (ej: cortexcc)"
-                        value={voiceForm.ariApp}
-                        onChange={(e) => setVoiceForm((p) => ({ ...p, ariApp: e.target.value }))}
-                        className="h-8 text-sm"
-                      />
-                      <Input
-                        placeholder="Usuario ARI"
-                        value={voiceForm.ariUsername}
-                        onChange={(e) => setVoiceForm((p) => ({ ...p, ariUsername: e.target.value }))}
-                        className="h-8 text-sm"
-                      />
-                      <Input
-                        placeholder="Password ARI"
-                        type="password"
-                        value={voiceForm.ariPassword}
-                        onChange={(e) => setVoiceForm((p) => ({ ...p, ariPassword: e.target.value }))}
-                        className="h-8 text-sm md:col-span-2"
-                      />
-                      <Label className="text-xs font-semibold pt-2 md:col-span-2">Mapeo de evento</Label>
-                      <Input
-                        placeholder="caller.number"
-                        value={voiceForm.callerIdField}
-                        onChange={(e) => setVoiceForm((p) => ({ ...p, callerIdField: e.target.value }))}
-                        className="h-8 text-sm"
-                      />
-                      <Input
-                        placeholder="dialplan.exten"
-                        value={voiceForm.dialedNumberField}
-                        onChange={(e) => setVoiceForm((p) => ({ ...p, dialedNumberField: e.target.value }))}
-                        className="h-8 text-sm"
-                      />
-                      <Input
-                        placeholder="endpoint"
-                        value={voiceForm.extensionField}
-                        onChange={(e) => setVoiceForm((p) => ({ ...p, extensionField: e.target.value }))}
-                        className="h-8 text-sm"
-                      />
-                      <Input
-                        placeholder="Reintento WS (segundos)"
-                        value={voiceForm.pollFallbackSec}
-                        onChange={(e) => setVoiceForm((p) => ({ ...p, pollFallbackSec: e.target.value }))}
-                        className="h-8 text-sm"
-                      />
-                    </div>
-                  ) : (
-                    <Textarea value={cConfig} onChange={(e) => setCConfig(e.target.value)} className="min-h-[100px] text-xs font-mono" />
-                  )}
-                </>
-              )}
-            </div>
+            <ChannelConfigSection
+              channelType={cType}
+              waForm={waForm}
+              onWaFormChange={setWaForm}
+              emailForm={emailForm}
+              onEmailFormChange={(patch) => setEmailForm((p) => ({ ...p, ...patch }))}
+              voiceForm={voiceForm}
+              onVoiceFormChange={(patch) => {
+                setVoiceForm((p) => ({ ...p, ...patch }));
+                setAriTestResult(null);
+              }}
+              cConfig={cConfig}
+              onCConfigChange={setCConfig}
+              onTestAri={runVoiceAriTest}
+              ariTestPending={testVoiceAriMut.isPending}
+              ariTestResult={ariTestResult}
+              derivedAriBaseUrl={derivedAriBaseUrl}
+            />
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>

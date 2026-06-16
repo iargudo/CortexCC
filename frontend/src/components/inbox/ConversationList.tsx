@@ -3,7 +3,7 @@ import { ChannelIcon } from "@/components/ChannelIcon";
 import { PriorityIndicator, SlaBar } from "@/components/PriorityIndicator";
 import { ConversationStatusBadge } from "@/components/StatusBadge";
 import { cn } from "@/lib/utils";
-import { MessageSquare, Mail, Phone, Globe, Users } from "lucide-react";
+import { Loader2, MessageSquare, Mail, Phone, Globe, Users } from "lucide-react";
 
 const channels: { type: ChannelType; icon: typeof MessageSquare }[] = [
   { type: "WHATSAPP", icon: MessageSquare },
@@ -25,6 +25,8 @@ interface Props {
   onChannelFilterChange: (c: ChannelType | null) => void;
   /** Si es false, no se muestra la pestaña "Todas" (requiere rol supervisor/admin en API). */
   showAllTab?: boolean;
+  isInitialLoad?: boolean;
+  isRefetching?: boolean;
 }
 
 export function ConversationList({
@@ -37,6 +39,8 @@ export function ConversationList({
   channelFilter,
   onChannelFilterChange,
   showAllTab = false,
+  isInitialLoad = false,
+  isRefetching = false,
 }: Props) {
   const tabs = (showAllTab ? (["mine", "queue", "all"] as const) : (["mine", "queue"] as const));
   const timeAgo = (dateStr: string) => {
@@ -92,8 +96,19 @@ export function ConversationList({
       </div>
 
       {/* List */}
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
-        {conversations.length === 0 ? (
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin relative">
+        {isRefetching && (
+          <div className="sticky top-0 z-10 flex items-center justify-center gap-1.5 border-b bg-card/95 py-1.5 text-[10px] text-muted-foreground backdrop-blur-sm">
+            <Loader2 size={12} className="animate-spin" />
+            Actualizando…
+          </div>
+        )}
+        {isInitialLoad ? (
+          <div className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground">
+            <Loader2 size={16} className="animate-spin" />
+            Cargando…
+          </div>
+        ) : conversations.length === 0 ? (
           <div className="p-4 text-center text-sm text-muted-foreground">No hay conversaciones</div>
         ) : (
           conversations.map(conv => (

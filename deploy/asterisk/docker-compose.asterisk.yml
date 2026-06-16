@@ -1,0 +1,37 @@
+services:
+  asterisk:
+    image: andrius/asterisk:latest
+    container_name: asterisk
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/sbin/asterisk", "-rx", "core show version"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    ports:
+      - "${ASTERISK_SIP_PORT}:5060/udp"
+      - "${ASTERISK_RTP_START}-${ASTERISK_RTP_END}:${ASTERISK_RTP_START}-${ASTERISK_RTP_END}/udp"
+      - "${ASTERISK_ARI_PUBLIC_PORT}:8088/tcp"
+      - "${ASTERISK_WSS_PORT}:8089/tcp"
+    volumes:
+      - ./conf/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./conf/pjsip_agents.conf:/etc/asterisk/pjsip_agents.conf:ro
+      - ./conf/pjsip_trunk.conf:/etc/asterisk/pjsip_trunk.conf:ro
+      - ./conf/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./conf/extensions_trunk.conf:/etc/asterisk/extensions_trunk.conf:ro
+      - ./conf/ari.conf:/etc/asterisk/ari.conf:ro
+      - ./conf/http.conf:/etc/asterisk/http.conf:ro
+      - ./conf/rtp.conf:/etc/asterisk/rtp.conf:ro
+      - ./keys:/etc/asterisk/keys
+      - asterisk_logs:/var/log/asterisk
+      - asterisk_spool:/var/spool/asterisk
+      - asterisk_lib:/var/lib/asterisk
+    environment:
+      TZ: "${ASTERISK_TZ}"
+
+volumes:
+  asterisk_logs:
+  asterisk_spool:
+  asterisk_lib:
+

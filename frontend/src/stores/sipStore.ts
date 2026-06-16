@@ -26,6 +26,7 @@ export interface CallInfo {
   endedAt: Date | null;
   muted: boolean;
   held: boolean;
+  mediaConnected?: boolean;
 }
 
 export interface CallHistoryEntry {
@@ -63,7 +64,7 @@ const DEFAULT_CONFIG: SipConfig = {
   password: "",
   displayName: "",
   stunServers: ["stun:stun.l.google.com:19302"],
-  iceGatheringTimeout: 5000,
+  iceGatheringTimeout: 1500,
 };
 
 export const useSipStore = create<SipState>((set) => ({

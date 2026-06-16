@@ -1,0 +1,6 @@
+{
+  "files.associations": {
+    "**/prisma/migrations/**/*.sql": "pgsql"
+  },
+  "mssql.intelliSense.enableErrorReporting": false
+}

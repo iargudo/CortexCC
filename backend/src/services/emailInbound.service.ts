@@ -1,5 +1,6 @@
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
 import { enqueueRouting } from "../queue/bull.js";
+import { scheduleInitialSlaCheck } from "./slaCheck.service.js";
 
 const OPEN_STATUSES = ["WAITING", "ASSIGNED", "ACTIVE", "ON_HOLD", "WRAP_UP"] as const;
 const STATUS_PRIORITY: Record<(typeof OPEN_STATUSES)[number], number> = {
@@ -39,7 +40,7 @@ export async function ingestEmailIncoming(
   const fromEmail = incoming.fromEmail.trim().toLowerCase();
   if (!fromEmail) throw new Error("Incoming email missing sender");
 
-  const already = await prisma.message.findFirst({
+  const already = await getPrisma().message.findFirst({
     where: { email_message_id: incoming.messageId },
     select: { id: true, conversation_id: true },
   });
@@ -48,16 +49,16 @@ export async function ingestEmailIncoming(
   }
 
   const existingContact =
-    (await prisma.contact.findFirst({
+    (await getPrisma().contact.findFirst({
       where: { email: { equals: fromEmail, mode: "insensitive" } },
     })) ??
-    (await prisma.contact.findFirst({
+    (await getPrisma().contact.findFirst({
       where: { external_id: fromEmail, source_system: "email" },
     }));
 
   const contact =
     existingContact ??
-    (await prisma.contact.create({
+    (await getPrisma().contact.create({
       data: {
         name: incoming.fromName,
         email: fromEmail,
@@ -67,13 +68,13 @@ export async function ingestEmailIncoming(
     }));
 
   if (existingContact && incoming.fromName && incoming.fromName !== existingContact.name) {
-    await prisma.contact.update({
+    await getPrisma().contact.update({
       where: { id: existingContact.id },
       data: { name: incoming.fromName, email: fromEmail },
     });
   }
 
-  const candidates = await prisma.conversation.findMany({
+  const candidates = await getPrisma().conversation.findMany({
     where: {
       channel_id: channelId,
       contact_id: contact.id,
@@ -90,8 +91,8 @@ export async function ingestEmailIncoming(
 
   let createdConversation = false;
   if (!conversation) {
-    const defaultQueue = await prisma.queue.findFirst({ where: { is_active: true } });
-    conversation = await prisma.conversation.create({
+    const defaultQueue = await getPrisma().queue.findFirst({ where: { is_active: true } });
+    conversation = await getPrisma().conversation.create({
       data: {
         channel_id: channelId,
         contact_id: contact.id,
@@ -107,7 +108,7 @@ export async function ingestEmailIncoming(
 
   const text = incoming.text.trim() || "[Correo recibido]";
   const htmlBody = incoming.htmlBody?.trim() || undefined;
-  const msg = await prisma.message.create({
+  const msg = await getPrisma().message.create({
     data: {
       conversation_id: conversation.id,
       sender_type: "CONTACT",
@@ -138,7 +139,7 @@ export async function ingestEmailIncoming(
     },
   });
 
-  await prisma.conversation.update({
+  await getPrisma().conversation.update({
     where: { id: conversation.id },
     data: {
       subject: conversation.subject ?? incoming.subject,
@@ -150,6 +151,9 @@ export async function ingestEmailIncoming(
 
   if (createdConversation) {
     await enqueueRouting({ conversationId: conversation.id });
+    if (conversation.queue_id) {
+      await scheduleInitialSlaCheck(conversation.id, conversation.queue_id);
+    }
   }
 
   return {

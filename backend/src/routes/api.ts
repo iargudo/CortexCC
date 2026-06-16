@@ -2,9 +2,9 @@ import { Router, type Express } from "express";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
 import rateLimit from "express-rate-limit";
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
 import { mapChannelType } from "../lib/channelTypes.js";
-import { authMiddleware, requireAuth } from "../middleware/auth.js";
+import { authMiddleware, optionalAuthMiddleware, requireAuth } from "../middleware/auth.js";
 import { integrationApiKeyMiddleware } from "../middleware/integrationAuth.js";
 import { requireAnyPermission, requirePermission } from "../middleware/requirePermission.js";
 import { HttpError } from "../middleware/errorHandler.js";
@@ -18,13 +18,31 @@ import * as reportService from "../services/report.service.js";
 import * as qualityService from "../services/quality.service.js";
 import * as integrationService from "../services/integration.service.js";
 import * as inboundService from "../services/inbound.service.js";
-import { ingestVoiceCallEvent } from "../services/voiceInbound.service.js";
+import { ingestVoiceCallEvent, upsertVoiceCallRecord, normalizePhoneNumber } from "../services/voiceInbound.service.js";
+import { buildDialerRouter } from "./dialer.js";
+import { tenantMiddleware } from "../middleware/tenant.js";
+import { buildTenantsRouter } from "./tenants.js";
+import { userRoom, queueRoom, conversationRoom, supervisorRoom, tenantLiveRoom } from "../lib/socketRooms.js";
+import { getCurrentTenantKey } from "../lib/tenantContext.js";
+import {
+  assignSoftphoneExtension,
+  bulkAssignSoftphoneExtensions,
+  exportSoftphoneEndpoints,
+  renderPjsipEndpoints,
+} from "../services/softphoneProvisioning.service.js";
+import {
+  answerConversationCall,
+  hangupConversationCall,
+  originateOutboundCall,
+  rejectConversationCall,
+} from "../services/voice/voiceCallController.service.js";
 import { RoutingEngine } from "../routing/RoutingEngine.js";
 import { enqueueRouting } from "../queue/bull.js";
 import { createAdapterForType } from "../channels/registry.js";
 import { getWhatsAppConfigValidationError } from "../channels/whatsapp/config.js";
 import { getEmailConfigValidationError } from "../channels/email/config.js";
 import { getVoiceConfigValidationError } from "../channels/voice/config.js";
+import * as telephonySettingsService from "../services/telephonySettings.service.js";
 import type { Server } from "socket.io";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -45,18 +63,19 @@ async function notifyUserOfConversationAssignment(
 ) {
   const io = getIo(app);
   if (!io) return;
-  const full = await prisma.conversation.findUnique({
+  const full = await getPrisma().conversation.findUnique({
     where: { id: params.conversationId },
     include: { contact: true, channel: true, queue: { select: { id: true, name: true } } },
   });
   const { conversationId, targetUserId } = params;
-  io.to(`user:${targetUserId}`).emit("conversation:assigned", {
+  const tenantKey = getCurrentTenantKey();
+  io.to(userRoom(tenantKey, targetUserId)).emit("conversation:assigned", {
     conversationId,
     contact_name: full?.contact?.name,
     channel: full?.channel.type,
     queue: full?.queue?.name,
   });
-  io.to(`user:${targetUserId}`).emit("notification:new", {
+  io.to(userRoom(tenantKey, targetUserId)).emit("notification:new", {
     type: params.fromAgentLabel ? "TRANSFER_RECEIVED" : "NEW_ASSIGNMENT",
     conversation_id: conversationId,
     data: {
@@ -68,8 +87,13 @@ async function notifyUserOfConversationAssignment(
     timestamp: new Date().toISOString(),
   });
   if (full?.queue_id) {
-    io.to(`queue:${full.queue_id}`).emit("queue:updated", { queueId: full.queue_id });
-    io.emit("supervisor:live_update", { type: "assign", conversationId, queueId: full.queue_id });
+    io.to(queueRoom(tenantKey, full.queue_id)).emit("queue:updated", { queueId: full.queue_id });
+    io.to(supervisorRoom(tenantKey)).emit("supervisor:live_update", {
+      type: "assign",
+      conversationId,
+      queueId: full.queue_id,
+      tenantKey,
+    });
   }
 }
 
@@ -87,6 +111,8 @@ const limiter = rateLimit({ windowMs: 60_000, max: 300 });
 export function buildApiRouter(app: Express): Router {
   const r = Router();
   r.use(limiter);
+  r.use(tenantMiddleware);
+  r.use("/tenants", buildTenantsRouter());
 
   r.get(
     "/health",
@@ -130,7 +156,7 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (_req, res) => {
       let database = false;
       try {
-        await prisma.$queryRaw`SELECT 1`;
+        await getPrisma().$queryRaw`SELECT 1`;
         database = true;
       } catch {
         database = false;
@@ -184,34 +210,40 @@ export function buildApiRouter(app: Express): Router {
   );
 
   r.post(
-    "/webhooks/whatsapp/:channelId",
+    "/webhooks/:tenantKey/whatsapp/:channelId",
     asyncHandler(async (req, res) => {
       const channelId = routeParam(req, "channelId");
-      const ch = await prisma.channel.findUnique({ where: { id: channelId } });
+      const ch = await getPrisma().channel.findUnique({ where: { id: channelId } });
       if (!ch) throw new HttpError(404, "channel not found");
 
       // ACK inmediato para cumplir SLAs estrictos de proveedores (p. ej. 5s).
       res.status(202).json({ ok: true, accepted: true });
 
+      const tenantKey = routeParam(req, "tenantKey");
       void (async () => {
         try {
-          const adapter = createAdapterForType(ch.type);
-          await adapter.initialize(ch);
-          const incoming = await adapter.parseIncoming(req.body);
-          const ingestion = await inboundService.ingestIncomingMessage(ch.id, incoming);
-          const io = getIo(app);
-          io?.to(`conversation:${ingestion.conversation_id}`).emit("message:new", {
-            conversationId: ingestion.conversation_id,
-          });
-          const assignments = await prisma.conversationAssignment.findMany({
-            where: { conversation_id: ingestion.conversation_id, ended_at: null },
-            select: { user_id: true },
-          });
-          for (const a of assignments) {
-            io?.to(`user:${a.user_id}`).emit("message:new", {
+          const { ensureConnection } = await import("../lib/tenantConnectionManager.js");
+          const { runWithTenant } = await import("../lib/tenantContext.js");
+          const info = await ensureConnection(tenantKey);
+          await runWithTenant(info.key, info.name, async () => {
+            const adapter = createAdapterForType(ch.type);
+            await adapter.initialize(ch);
+            const incoming = await adapter.parseIncoming(req.body);
+            const ingestion = await inboundService.ingestIncomingMessage(ch.id, incoming);
+            const io = getIo(app);
+            io?.to(conversationRoom(tenantKey, ingestion.conversation_id)).emit("message:new", {
               conversationId: ingestion.conversation_id,
             });
-          }
+            const assignments = await getPrisma().conversationAssignment.findMany({
+              where: { conversation_id: ingestion.conversation_id, ended_at: null },
+              select: { user_id: true },
+            });
+            for (const a of assignments) {
+              io?.to(userRoom(tenantKey, a.user_id)).emit("message:new", {
+                conversationId: ingestion.conversation_id,
+              });
+            }
+          });
         } catch (error) {
           console.error("whatsapp webhook async processing error", {
             channelId,
@@ -222,12 +254,13 @@ export function buildApiRouter(app: Express): Router {
     })
   );
 
-  r.use(authMiddleware);
+  r.use(optionalAuthMiddleware);
 
   r.get(
     "/auth/me",
+    requireAuth,
     asyncHandler(async (req, res) => {
-      const user = await prisma.user.findUniqueOrThrow({
+      const user = await getPrisma().user.findUniqueOrThrow({
         where: { id: req.authUser!.id },
         include: { roles: { include: { role: true } } },
       });
@@ -237,6 +270,7 @@ export function buildApiRouter(app: Express): Router {
 
   r.put(
     "/auth/profile",
+    requireAuth,
     asyncHandler(async (req, res) => {
       const body = req.body as { name?: string; email?: string; max_concurrent?: number };
       const updated = await authService.changeProfile(req.authUser!.id, body);
@@ -246,11 +280,15 @@ export function buildApiRouter(app: Express): Router {
 
   r.put(
     "/auth/status",
+    requireAuth,
     asyncHandler(async (req, res) => {
       const { status } = req.body as { status?: string };
       if (!status) throw new HttpError(400, "status required");
       const updated = await authService.setAgentStatus(req.authUser!.id, status);
-      getIo(app)?.emit("agent:status_changed", { userId: req.authUser!.id, status });
+      const tenantKey = getCurrentTenantKey();
+      getIo(app)
+        ?.to(tenantLiveRoom(tenantKey))
+        .emit("agent:status_changed", { userId: req.authUser!.id, status, tenantKey });
       res.json(updated);
     })
   );
@@ -292,25 +330,26 @@ export function buildApiRouter(app: Express): Router {
       const startedAt = startedAtRaw && !Number.isNaN(startedAtRaw.getTime()) ? startedAtRaw : null;
       const endedAt = endedAtRaw && !Number.isNaN(endedAtRaw.getTime()) ? endedAtRaw : null;
 
-      const row = await prisma.voiceCall.create({
-        data: {
-          user_id: req.authUser!.id,
-          external_call_id: externalCallId,
-          remote_uri: remoteUri,
-          remote_display_name: body.remote_display_name ? String(body.remote_display_name) : null,
-          direction,
-          state,
-          started_at: startedAt,
-          ended_at: endedAt,
-          duration_seconds:
-            typeof body.duration_seconds === "number" && Number.isFinite(body.duration_seconds)
-              ? Math.max(0, Math.round(body.duration_seconds))
-              : null,
-          metadata: {
-            source: "softphone_widget",
-            ...(body.metadata ?? {}),
-          },
+      const row = await upsertVoiceCallRecord({
+        externalCallId,
+        asteriskChannelId: (body.metadata?.asterisk_channel_id as string | undefined) ?? undefined,
+        callerNumber: direction === "inbound" ? remoteUri : undefined,
+        dialedNumber: direction === "outbound" ? remoteUri : undefined,
+        callerName: body.remote_display_name || undefined,
+        direction,
+        state,
+        timestamp: startedAt ?? new Date(),
+        durationSeconds:
+          typeof body.duration_seconds === "number" && Number.isFinite(body.duration_seconds)
+            ? Math.max(0, Math.round(body.duration_seconds))
+            : undefined,
+        metadata: {
+          source: "softphone_widget",
+          ended_at: endedAt?.toISOString(),
+          ...(body.metadata ?? {}),
         },
+        userId: req.authUser!.id,
+        conversationId: body.metadata?.conversation_id as string | undefined,
       });
 
       res.status(201).json({
@@ -331,13 +370,13 @@ export function buildApiRouter(app: Express): Router {
 
       const where = { user_id: req.authUser!.id };
       const [items, total] = await Promise.all([
-        prisma.voiceCall.findMany({
+        getPrisma().voiceCall.findMany({
           where,
           orderBy: { created_at: "desc" },
           skip,
           take: limit,
         }),
-        prisma.voiceCall.count({ where }),
+        getPrisma().voiceCall.count({ where }),
       ]);
 
       res.json({ items, page, limit, total });
@@ -413,6 +452,63 @@ export function buildApiRouter(app: Express): Router {
         remoteUri,
       });
       res.status(201).json(out);
+    })
+  );
+
+  r.post(
+    "/voice/calls/originate",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const body = req.body as {
+        phone?: string;
+        conversation_id?: string;
+        contact_id?: string;
+        channel_id?: string;
+      };
+      const phone = normalizePhoneNumber(body.phone);
+      if (!phone) throw new HttpError(400, "phone required");
+
+      const channel = body.channel_id
+        ? await getPrisma().channel.findUnique({ where: { id: body.channel_id } })
+        : await getPrisma().channel.findFirst({ where: { type: "VOICE", status: "active" } });
+      if (!channel || channel.type !== "VOICE") throw new HttpError(400, "Active VOICE channel required");
+
+      const out = await originateOutboundCall({
+        io: getIo(app),
+        channel,
+        agentUserId: req.authUser!.id,
+        phone,
+        conversationId: body.conversation_id,
+        contactId: body.contact_id,
+      });
+      res.status(201).json(out);
+    })
+  );
+
+  r.post(
+    "/voice/calls/:conversationId/answer",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      await answerConversationCall(getIo(app), routeParam(req, "conversationId"), req.authUser!.id);
+      res.json({ ok: true });
+    })
+  );
+
+  r.post(
+    "/voice/calls/:conversationId/reject",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      await rejectConversationCall(getIo(app), routeParam(req, "conversationId"));
+      res.json({ ok: true });
+    })
+  );
+
+  r.post(
+    "/voice/calls/:conversationId/hangup",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      await hangupConversationCall(getIo(app), routeParam(req, "conversationId"));
+      res.json({ ok: true });
     })
   );
 
@@ -629,7 +725,18 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const roleNames = req.authUser!.roles.map((r) => r.name);
       await conversationService.assertAgentCanAccessConversation(routeParam(req, "id"), conversationViewer(req));
-      res.json(await integrationService.getConversationIntegrationWorkspace(routeParam(req, "id"), roleNames));
+      res.json(
+        await integrationService.getConversationIntegrationWorkspace(
+          routeParam(req, "id"),
+          {
+            id: req.authUser!.id,
+            email: req.authUser!.email,
+            first_name: req.authUser!.first_name,
+            last_name: req.authUser!.last_name,
+          },
+          roleNames
+        )
+      );
     })
   );
 
@@ -751,7 +858,9 @@ export function buildApiRouter(app: Express): Router {
         },
         conversationViewer(req)
       );
-      getIo(app)?.to(`conversation:${routeParam(req, "id")}`).emit("message:new", { conversationId: routeParam(req, "id"), message: msg });
+      getIo(app)
+        ?.to(conversationRoom(getCurrentTenantKey(), routeParam(req, "id")))
+        .emit("message:new", { conversationId: routeParam(req, "id"), message: msg });
       res.status(201).json(msg);
     })
   );
@@ -874,7 +983,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("contacts"),
     asyncHandler(async (_req, res) => {
-      const rows = await prisma.contact.findMany({ take: 10_000 });
+      const rows = await getPrisma().contact.findMany({ take: 10_000 });
       const header = "id,name,email,phone\n";
       const body = rows.map((c) => `${c.id},${c.name ?? ""},${c.email ?? ""},${c.phone ?? ""}`).join("\n");
       res.setHeader("Content-Type", "text/csv");
@@ -900,6 +1009,42 @@ export function buildApiRouter(app: Express): Router {
     requirePermission("contacts"),
     asyncHandler(async (req, res) => {
       res.json(await contactService.timeline(routeParam(req, "id")));
+    })
+  );
+
+  r.get(
+    "/contacts/:id/interactions",
+    requireAuth,
+    requirePermission("inbox"),
+    asyncHandler(async (req, res) => {
+      const limit = Math.min(parseInt(String(req.query.limit ?? "8"), 10) || 8, 100);
+      const messagesPerConversation = Math.min(
+        parseInt(String(req.query.messages_per_conversation ?? "3"), 10) || 3,
+        10
+      );
+      res.json(
+        await contactService.getContactInteractions(routeParam(req, "id"), {
+          limit,
+          messagesPerConversation,
+        })
+      );
+    })
+  );
+
+  r.get(
+    "/contacts/:id/activity-feed",
+    requireAuth,
+    requirePermission("inbox"),
+    asyncHandler(async (req, res) => {
+      const limit = Math.min(parseInt(String(req.query.limit ?? "6"), 10) || 6, 20);
+      const excludeConversationId =
+        typeof req.query.exclude_conversation_id === "string" ? req.query.exclude_conversation_id : undefined;
+      res.json(
+        await contactService.getContactActivityFeed(routeParam(req, "id"), {
+          limit,
+          excludeConversationId,
+        })
+      );
     })
   );
 
@@ -938,7 +1083,7 @@ export function buildApiRouter(app: Express): Router {
     "/agents",
     requireAuth,
     asyncHandler(async (_req, res) => {
-      const users = await prisma.user.findMany({
+      const users = await getPrisma().user.findMany({
         include: {
           skills: { include: { skill: true } },
           teams: { include: { team: true } },
@@ -967,7 +1112,7 @@ export function buildApiRouter(app: Express): Router {
     "/agents/online",
     requireAuth,
     asyncHandler(async (_req, res) => {
-      const users = await prisma.user.findMany({
+      const users = await getPrisma().user.findMany({
         where: { status: { in: ["ONLINE", "BUSY"] } },
         include: { skills: { include: { skill: true } }, assignments: { where: { ended_at: null } } },
       });
@@ -989,7 +1134,7 @@ export function buildApiRouter(app: Express): Router {
     "/agents/:id",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const u = await prisma.user.findUnique({
+      const u = await getPrisma().user.findUnique({
         where: { id: routeParam(req, "id") },
         include: { skills: { include: { skill: true } }, assignments: { where: { ended_at: null } } },
       });
@@ -1012,11 +1157,14 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const { status } = req.body as { status?: string };
       if (!status) throw new HttpError(400, "status required");
-      const u = await prisma.user.update({
+      const u = await getPrisma().user.update({
         where: { id: routeParam(req, "id") },
         data: { status: status as never, status_since: new Date() },
       });
-      getIo(app)?.emit("agent:status_changed", { userId: u.id, status: u.status });
+      const tenantKey = getCurrentTenantKey();
+      getIo(app)
+        ?.to(tenantLiveRoom(tenantKey))
+        .emit("agent:status_changed", { userId: u.id, status: u.status, tenantKey });
       res.json({ id: u.id, status: u.status });
     })
   );
@@ -1025,13 +1173,13 @@ export function buildApiRouter(app: Express): Router {
     "/queues",
     requireAuth,
     asyncHandler(async (_req, res) => {
-      const queues = await prisma.queue.findMany({
+      const queues = await getPrisma().queue.findMany({
         include: { team: true, _count: { select: { conversations: { where: { status: "WAITING" } } } } },
       });
       const queueIds = queues.map((q) => q.id);
       const teamIds = [...new Set(queues.map((q) => q.team_id).filter(Boolean))] as string[];
 
-      const activeByQueue = await prisma.conversation.groupBy({
+      const activeByQueue = await getPrisma().conversation.groupBy({
         by: ["queue_id", "status"],
         where: { queue_id: { not: null } },
         _count: true,
@@ -1047,7 +1195,7 @@ export function buildApiRouter(app: Express): Router {
 
       const onlineByTeam = new Map<string, number>();
       if (teamIds.length) {
-        const onlineMembers = await prisma.teamMember.findMany({
+        const onlineMembers = await getPrisma().teamMember.findMany({
           where: { team_id: { in: teamIds }, user: { status: "ONLINE" } },
           select: { team_id: true },
         });
@@ -1059,7 +1207,7 @@ export function buildApiRouter(app: Express): Router {
       const weekAgo = new Date(Date.now() - 7 * 86_400_000);
       const waitAvgs =
         queueIds.length > 0
-          ? await prisma.conversation.groupBy({
+          ? await getPrisma().conversation.groupBy({
               by: ["queue_id"],
               where: {
                 queue_id: { in: queueIds },
@@ -1080,7 +1228,7 @@ export function buildApiRouter(app: Express): Router {
       sod.setHours(0, 0, 0, 0);
       const slaRows =
         queueIds.length > 0
-          ? await prisma.conversation.groupBy({
+          ? await getPrisma().conversation.groupBy({
               by: ["queue_id", "sla_breached"],
               where: { queue_id: { in: queueIds }, resolved_at: { gte: sod } },
               _count: { _all: true },
@@ -1125,7 +1273,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("supervisor"),
     asyncHandler(async (_req, res) => {
-      const queues = await prisma.queue.findMany();
+      const queues = await getPrisma().queue.findMany();
       res.json(queues);
     })
   );
@@ -1134,7 +1282,7 @@ export function buildApiRouter(app: Express): Router {
     "/queues/:id/waiting",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const rows = await prisma.conversation.findMany({
+      const rows = await getPrisma().conversation.findMany({
         where: { queue_id: routeParam(req, "id"), status: "WAITING" },
         include: {
           contact: { include: { tags: { include: { tag: true } } } },
@@ -1159,7 +1307,7 @@ export function buildApiRouter(app: Express): Router {
     "/queues/:id/active",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const rows = await prisma.conversation.findMany({
+      const rows = await getPrisma().conversation.findMany({
         where: {
           queue_id: routeParam(req, "id"),
           status: { in: ["ASSIGNED", "ACTIVE", "WRAP_UP", "ON_HOLD"] },
@@ -1196,9 +1344,9 @@ export function buildApiRouter(app: Express): Router {
         max_wait_seconds?: number;
       };
       const team = body.team
-        ? await prisma.team.findFirst({ where: { name: body.team } })
+        ? await getPrisma().team.findFirst({ where: { name: body.team } })
         : null;
-      const q = await prisma.queue.create({
+      const q = await getPrisma().queue.create({
         data: {
           name: body.name,
           description: body.description,
@@ -1216,7 +1364,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      const q = await prisma.queue.update({ where: { id: routeParam(req, "id") }, data: req.body });
+      const q = await getPrisma().queue.update({ where: { id: routeParam(req, "id") }, data: req.body });
       res.json(q);
     })
   );
@@ -1226,7 +1374,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      await prisma.queue.delete({ where: { id: routeParam(req, "id") } });
+      await getPrisma().queue.delete({ where: { id: routeParam(req, "id") } });
       res.status(204).send();
     })
   );
@@ -1283,9 +1431,9 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const conversationId = String(req.query.conversation_id ?? "");
       const strategy = String(req.query.strategy ?? "LEAST_BUSY") as never;
-      const conv = await prisma.conversation.findUnique({ where: { id: conversationId } });
+      const conv = await getPrisma().conversation.findUnique({ where: { id: conversationId } });
       if (!conv?.queue_id) throw new HttpError(400, "Conversation has no queue");
-      const engine = new RoutingEngine(prisma, getIo(app));
+      const engine = new RoutingEngine(getPrisma(), getIo(app));
       const agentId = await engine.recommendAgent(conv.queue_id, strategy);
       res.json({ agent_id: agentId });
     })
@@ -1296,7 +1444,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      const ch = await prisma.channel.findUnique({ where: { id: routeParam(req, "id") } });
+      const ch = await getPrisma().channel.findUnique({ where: { id: routeParam(req, "id") } });
       if (!ch) throw new HttpError(404, "channel not found");
       res.json(ch);
     })
@@ -1307,17 +1455,21 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (_req, res) => {
-      const channels = await prisma.channel.findMany();
-      const counts = await prisma.conversation.groupBy({ by: ["channel_id"], _count: true, where: { created_at: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } });
+      const channels = await getPrisma().channel.findMany();
+      const counts = await getPrisma().conversation.groupBy({ by: ["channel_id"], _count: true, where: { created_at: { gte: new Date(new Date().setHours(0, 0, 0, 0)) } } });
       const map = new Map(counts.map((c) => [c.channel_id, c._count]));
       res.json(
-        channels.map((c) => ({
-          id: c.id,
-          name: c.name,
-          type: c.type,
-          status: c.status,
-          conversations_today: map.get(c.id) ?? 0,
-        }))
+        channels.map((c) => {
+          const cfg = (c.config ?? {}) as Record<string, unknown>;
+          return {
+            id: c.id,
+            name: c.name,
+            type: c.type,
+            status: c.status,
+            conversations_today: map.get(c.id) ?? 0,
+            ...(c.type === "WHATSAPP" ? { whatsapp_provider: String(cfg.provider ?? "ultramsg") } : {}),
+          };
+        })
       );
     })
   );
@@ -1344,12 +1496,19 @@ export function buildApiRouter(app: Express): Router {
         const error = getVoiceConfigValidationError(body.config ?? {});
         if (error) throw new HttpError(400, `Invalid VOICE channel config: ${error}`);
       }
-      const ch = await prisma.channel.create({
+      const voiceConfig =
+        mappedType === "VOICE"
+          ? await telephonySettingsService.applyPbxHostToVoiceChannelIfNeeded(
+              { type: "VOICE" } as import("@prisma/client").Channel,
+              (body.config ?? {}) as Record<string, unknown>
+            )
+          : (body.config as object) ?? {};
+      const ch = await getPrisma().channel.create({
         data: {
           name: body.name.trim(),
           type: mappedType,
           status: body.status ?? "active",
-          config: (body.config as object) ?? {},
+          config: mappedType === "VOICE" ? voiceConfig : ((body.config as object) ?? {}),
         },
       });
       res.status(201).json(ch);
@@ -1362,7 +1521,7 @@ export function buildApiRouter(app: Express): Router {
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
       try {
-        await prisma.channel.delete({ where: { id: routeParam(req, "id") } });
+        await getPrisma().channel.delete({ where: { id: routeParam(req, "id") } });
         res.status(204).send();
       } catch {
         throw new HttpError(409, "Channel is in use or could not be deleted");
@@ -1371,16 +1530,36 @@ export function buildApiRouter(app: Express): Router {
   );
 
   r.post(
+    "/settings/channels/voice/test",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const body = req.body as { config?: object };
+      const error = getVoiceConfigValidationError(body.config ?? {});
+      if (error) throw new HttpError(400, `Invalid VOICE channel config: ${error}`);
+
+      const adapter = createAdapterForType("VOICE");
+      const draftChannel = { config: body.config ?? {} } as import("@prisma/client").Channel;
+      await adapter.initialize(draftChannel);
+      const health = await adapter.healthCheck(draftChannel);
+      res.json({ ok: health.ok, detail: health.detail, warnings: health.warnings });
+    })
+  );
+
+  r.post(
     "/settings/channels/:id/test",
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      const ch = await prisma.channel.findUnique({ where: { id: routeParam(req, "id") } });
+      const ch = await getPrisma().channel.findUnique({ where: { id: routeParam(req, "id") } });
       if (!ch) throw new HttpError(404, "Channel not found");
+      const body = req.body as { config?: object };
+      const testChannel =
+        body.config !== undefined ? ({ ...ch, config: body.config } as typeof ch) : ch;
       const adapter = createAdapterForType(ch.type);
-      await adapter.initialize(ch);
-      const health = await adapter.healthCheck(ch);
-      res.json({ ok: health.ok, detail: health.detail });
+      await adapter.initialize(testChannel);
+      const health = await adapter.healthCheck(testChannel);
+      res.json({ ok: health.ok, detail: health.detail, warnings: health.warnings });
     })
   );
 
@@ -1390,7 +1569,7 @@ export function buildApiRouter(app: Express): Router {
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
       const body = req.body as { config?: object; status?: string; name?: string };
-      const existing = await prisma.channel.findUnique({ where: { id: routeParam(req, "id") } });
+      const existing = await getPrisma().channel.findUnique({ where: { id: routeParam(req, "id") } });
       if (!existing) throw new HttpError(404, "channel not found");
       if (existing.type === "WHATSAPP" && body.config !== undefined) {
         const error = getWhatsAppConfigValidationError(body.config);
@@ -1404,10 +1583,17 @@ export function buildApiRouter(app: Express): Router {
         const error = getVoiceConfigValidationError(body.config);
         if (error) throw new HttpError(400, `Invalid VOICE channel config: ${error}`);
       }
-      const ch = await prisma.channel.update({
+      const nextConfig =
+        existing.type === "VOICE" && body.config !== undefined
+          ? await telephonySettingsService.applyPbxHostToVoiceChannelIfNeeded(
+              existing,
+              body.config as Record<string, unknown>
+            )
+          : body.config;
+      const ch = await getPrisma().channel.update({
         where: { id: routeParam(req, "id") },
         data: {
-          ...(body.config !== undefined ? { config: body.config } : {}),
+          ...(nextConfig !== undefined ? { config: nextConfig } : {}),
           ...(body.status !== undefined ? { status: body.status } : {}),
           ...(body.name !== undefined ? { name: body.name } : {}),
         },
@@ -1421,7 +1607,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (_req, res) => {
-      res.json(await prisma.skill.findMany());
+      res.json(await getPrisma().skill.findMany());
     })
   );
   r.post(
@@ -1429,7 +1615,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.status(201).json(await prisma.skill.create({ data: req.body }));
+      res.status(201).json(await getPrisma().skill.create({ data: req.body }));
     })
   );
   r.put(
@@ -1437,7 +1623,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.json(await prisma.skill.update({ where: { id: routeParam(req, "id") }, data: req.body }));
+      res.json(await getPrisma().skill.update({ where: { id: routeParam(req, "id") }, data: req.body }));
     })
   );
   r.delete(
@@ -1445,7 +1631,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      await prisma.skill.delete({ where: { id: routeParam(req, "id") } });
+      await getPrisma().skill.delete({ where: { id: routeParam(req, "id") } });
       res.status(204).send();
     })
   );
@@ -1455,7 +1641,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (_req, res) => {
-      const teams = await prisma.team.findMany({ include: { _count: { select: { members: true } } } });
+      const teams = await getPrisma().team.findMany({ include: { _count: { select: { members: true } } } });
       res.json(
         teams.map((t) => ({
           id: t.id,
@@ -1471,7 +1657,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.status(201).json(await prisma.team.create({ data: req.body }));
+      res.status(201).json(await getPrisma().team.create({ data: req.body }));
     })
   );
   r.put(
@@ -1479,7 +1665,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.json(await prisma.team.update({ where: { id: routeParam(req, "id") }, data: req.body }));
+      res.json(await getPrisma().team.update({ where: { id: routeParam(req, "id") }, data: req.body }));
     })
   );
   r.delete(
@@ -1487,8 +1673,116 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      await prisma.team.delete({ where: { id: routeParam(req, "id") } });
+      await getPrisma().team.delete({ where: { id: routeParam(req, "id") } });
       res.status(204).send();
+    })
+  );
+
+  r.get(
+    "/settings/teams/:id/members",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const teamId = routeParam(req, "id");
+      const team = await getPrisma().team.findUnique({ where: { id: teamId } });
+      if (!team) throw new HttpError(404, "Team not found");
+      const members = await getPrisma().teamMember.findMany({
+        where: { team_id: teamId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              first_name: true,
+              last_name: true,
+              status: true,
+            },
+          },
+        },
+        orderBy: { user: { first_name: "asc" } },
+      });
+      res.json(
+        members.map((m) => ({
+          id: m.id,
+          user_id: m.user_id,
+          role: m.role,
+          user: {
+            id: m.user.id,
+            email: m.user.email,
+            name: `${m.user.first_name} ${m.user.last_name}`.trim(),
+            status: m.user.status,
+          },
+        }))
+      );
+    })
+  );
+
+  r.put(
+    "/settings/teams/:id/members",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const teamId = routeParam(req, "id");
+      const userIds = Array.isArray(req.body?.user_ids) ? (req.body.user_ids as string[]) : null;
+      if (!userIds) throw new HttpError(400, "user_ids required");
+
+      const team = await getPrisma().team.findUnique({ where: { id: teamId } });
+      if (!team) throw new HttpError(404, "Team not found");
+
+      const uniqueIds = [...new Set(userIds.filter((id) => typeof id === "string" && id.trim()))];
+      if (uniqueIds.length > 0) {
+        const found = await getPrisma().user.findMany({
+          where: { id: { in: uniqueIds } },
+          select: { id: true },
+        });
+        if (found.length !== uniqueIds.length) {
+          throw new HttpError(400, "One or more user_ids are invalid");
+        }
+      }
+
+      await getPrisma().$transaction(async (tx) => {
+        await tx.teamMember.deleteMany({ where: { team_id: teamId } });
+        if (uniqueIds.length > 0) {
+          await tx.teamMember.createMany({
+            data: uniqueIds.map((userId) => ({
+              team_id: teamId,
+              user_id: userId,
+              role: "member",
+            })),
+          });
+        }
+      });
+
+      const members = await getPrisma().teamMember.findMany({
+        where: { team_id: teamId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              first_name: true,
+              last_name: true,
+              status: true,
+            },
+          },
+        },
+        orderBy: { user: { first_name: "asc" } },
+      });
+
+      res.json({
+        member_count: members.length,
+        members: members.map((m) => ({
+          id: m.id,
+          user_id: m.user_id,
+          role: m.role,
+          user: {
+            id: m.user.id,
+            email: m.user.email,
+            name: `${m.user.first_name} ${m.user.last_name}`.trim(),
+            status: m.user.status,
+          },
+        })),
+      });
     })
   );
 
@@ -1497,7 +1791,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (_req, res) => {
-      res.json(await prisma.role.findMany());
+      res.json(await getPrisma().role.findMany());
     })
   );
   r.post(
@@ -1505,7 +1799,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.status(201).json(await prisma.role.create({ data: req.body }));
+      res.status(201).json(await getPrisma().role.create({ data: req.body }));
     })
   );
   r.put(
@@ -1513,7 +1807,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.json(await prisma.role.update({ where: { id: routeParam(req, "id") }, data: req.body }));
+      res.json(await getPrisma().role.update({ where: { id: routeParam(req, "id") }, data: req.body }));
     })
   );
   r.delete(
@@ -1521,7 +1815,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      await prisma.role.delete({ where: { id: routeParam(req, "id") } });
+      await getPrisma().role.delete({ where: { id: routeParam(req, "id") } });
       res.status(204).send();
     })
   );
@@ -1531,7 +1825,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("inbox"),
     asyncHandler(async (_req, res) => {
-      res.json(await prisma.disposition.findMany());
+      res.json(await getPrisma().disposition.findMany());
     })
   );
   r.post(
@@ -1539,7 +1833,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.status(201).json(await prisma.disposition.create({ data: req.body }));
+      res.status(201).json(await getPrisma().disposition.create({ data: req.body }));
     })
   );
   r.put(
@@ -1547,7 +1841,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.json(await prisma.disposition.update({ where: { id: routeParam(req, "id") }, data: req.body }));
+      res.json(await getPrisma().disposition.update({ where: { id: routeParam(req, "id") }, data: req.body }));
     })
   );
   r.delete(
@@ -1555,7 +1849,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      await prisma.disposition.delete({ where: { id: routeParam(req, "id") } });
+      await getPrisma().disposition.delete({ where: { id: routeParam(req, "id") } });
       res.status(204).send();
     })
   );
@@ -1564,7 +1858,7 @@ export function buildApiRouter(app: Express): Router {
     "/settings/quick-replies",
     requireAuth,
     asyncHandler(async (_req, res) => {
-      res.json(await prisma.quickReply.findMany());
+      res.json(await getPrisma().quickReply.findMany());
     })
   );
   r.post(
@@ -1572,7 +1866,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.status(201).json(await prisma.quickReply.create({ data: req.body }));
+      res.status(201).json(await getPrisma().quickReply.create({ data: req.body }));
     })
   );
   r.put(
@@ -1580,7 +1874,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.json(await prisma.quickReply.update({ where: { id: routeParam(req, "id") }, data: req.body }));
+      res.json(await getPrisma().quickReply.update({ where: { id: routeParam(req, "id") }, data: req.body }));
     })
   );
   r.delete(
@@ -1588,7 +1882,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      await prisma.quickReply.delete({ where: { id: routeParam(req, "id") } });
+      await getPrisma().quickReply.delete({ where: { id: routeParam(req, "id") } });
       res.status(204).send();
     })
   );
@@ -1598,7 +1892,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (_req, res) => {
-      res.json(await prisma.slaPolicy.findMany());
+      res.json(await getPrisma().slaPolicy.findMany());
     })
   );
   r.post(
@@ -1606,7 +1900,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.status(201).json(await prisma.slaPolicy.create({ data: req.body }));
+      res.status(201).json(await getPrisma().slaPolicy.create({ data: req.body }));
     })
   );
   r.put(
@@ -1614,7 +1908,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.json(await prisma.slaPolicy.update({ where: { id: routeParam(req, "id") }, data: req.body }));
+      res.json(await getPrisma().slaPolicy.update({ where: { id: routeParam(req, "id") }, data: req.body }));
     })
   );
   r.delete(
@@ -1622,7 +1916,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      await prisma.slaPolicy.delete({ where: { id: routeParam(req, "id") } });
+      await getPrisma().slaPolicy.delete({ where: { id: routeParam(req, "id") } });
       res.status(204).send();
     })
   );
@@ -1632,7 +1926,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (_req, res) => {
-      res.json(await prisma.businessHours.findMany());
+      res.json(await getPrisma().businessHours.findMany());
     })
   );
   r.post(
@@ -1640,7 +1934,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.status(201).json(await prisma.businessHours.create({ data: req.body }));
+      res.status(201).json(await getPrisma().businessHours.create({ data: req.body }));
     })
   );
   r.put(
@@ -1648,7 +1942,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.json(await prisma.businessHours.update({ where: { id: routeParam(req, "id") }, data: req.body }));
+      res.json(await getPrisma().businessHours.update({ where: { id: routeParam(req, "id") }, data: req.body }));
     })
   );
 
@@ -1656,7 +1950,7 @@ export function buildApiRouter(app: Express): Router {
     "/settings/email-templates",
     requireAuth,
     asyncHandler(async (_req, res) => {
-      res.json(await prisma.emailTemplate.findMany());
+      res.json(await getPrisma().emailTemplate.findMany());
     })
   );
   r.post(
@@ -1664,7 +1958,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.status(201).json(await prisma.emailTemplate.create({ data: req.body }));
+      res.status(201).json(await getPrisma().emailTemplate.create({ data: req.body }));
     })
   );
   r.put(
@@ -1672,7 +1966,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      res.json(await prisma.emailTemplate.update({ where: { id: routeParam(req, "id") }, data: req.body }));
+      res.json(await getPrisma().emailTemplate.update({ where: { id: routeParam(req, "id") }, data: req.body }));
     })
   );
   r.delete(
@@ -1680,7 +1974,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      await prisma.emailTemplate.delete({ where: { id: routeParam(req, "id") } });
+      await getPrisma().emailTemplate.delete({ where: { id: routeParam(req, "id") } });
       res.status(204).send();
     })
   );
@@ -1790,7 +2084,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (_req, res) => {
-      const org = await prisma.organizationSettings.findUnique({ where: { id: "default" } });
+      const org = await getPrisma().organizationSettings.findUnique({ where: { id: "default" } });
       res.json(org);
     })
   );
@@ -1799,7 +2093,7 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      const org = await prisma.organizationSettings.upsert({
+      const org = await getPrisma().organizationSettings.upsert({
         where: { id: "default" },
         create: { id: "default", ...req.body },
         update: req.body,
@@ -1809,11 +2103,30 @@ export function buildApiRouter(app: Express): Router {
   );
 
   r.get(
+    "/settings/telephony",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (_req, res) => {
+      res.json(await telephonySettingsService.getTelephonySettings());
+    })
+  );
+
+  r.put(
+    "/settings/telephony",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const saved = await telephonySettingsService.saveTelephonySettings(req.body);
+      res.json(saved);
+    })
+  );
+
+  r.get(
     "/settings/softphone/me",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const org = await prisma.organizationSettings.findUnique({ where: { id: "default" } });
-      const user = await prisma.user.findUnique({
+      const org = await getPrisma().organizationSettings.findUnique({ where: { id: "default" } });
+      const user = await getPrisma().user.findUnique({
         where: { id: req.authUser!.id },
         select: { sip_extension: true, sip_password: true },
       });
@@ -1848,7 +2161,7 @@ export function buildApiRouter(app: Express): Router {
       const trimmedExtension = String(body.extension ?? "").trim();
       const rawPassword = String(body.password ?? "");
 
-      await prisma.user.update({
+      await getPrisma().user.update({
         where: { id: req.authUser!.id },
         data: {
           sip_extension: trimmedExtension || null,
@@ -1866,7 +2179,7 @@ export function buildApiRouter(app: Express): Router {
             ? Math.max(1000, Math.min(30000, Math.round(body.iceGatheringTimeout)))
             : 5000;
 
-        await prisma.organizationSettings.upsert({
+        await getPrisma().organizationSettings.upsert({
           where: { id: "default" },
           create: {
             id: "default",
@@ -1886,8 +2199,8 @@ export function buildApiRouter(app: Express): Router {
         });
       }
 
-      const org = await prisma.organizationSettings.findUnique({ where: { id: "default" } });
-      const user = await prisma.user.findUnique({
+      const org = await getPrisma().organizationSettings.findUnique({ where: { id: "default" } });
+      const user = await getPrisma().user.findUnique({
         where: { id: req.authUser!.id },
         select: { sip_extension: true, sip_password: true },
       });
@@ -1957,7 +2270,7 @@ export function buildApiRouter(app: Express): Router {
     requirePermission("settings"),
     asyncHandler(async (_req, res) => {
       res.json(
-        await prisma.user.findMany({
+        await getPrisma().user.findMany({
           include: { roles: { include: { role: true } }, skills: { include: { skill: true } } },
         })
       );
@@ -1994,8 +2307,8 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const { skills } = req.body as { skills?: { skill_id: string; proficiency: number }[] };
       if (!skills) throw new HttpError(400, "skills required");
-      await prisma.userSkill.deleteMany({ where: { user_id: routeParam(req, "id") } });
-      await prisma.userSkill.createMany({
+      await getPrisma().userSkill.deleteMany({ where: { user_id: routeParam(req, "id") } });
+      await getPrisma().userSkill.createMany({
         data: skills.map((s) => ({
           user_id: routeParam(req, "id"),
           skill_id: s.skill_id,
@@ -2015,6 +2328,62 @@ export function buildApiRouter(app: Express): Router {
       res.json(updated);
     })
   );
+
+  r.put(
+    "/settings/users/:id/softphone",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const body = req.body as { extension?: string; password?: string };
+      const out = await assignSoftphoneExtension(
+        routeParam(req, "id"),
+        body.extension,
+        body.password
+      );
+      res.json(out);
+    })
+  );
+
+  r.post(
+    "/settings/users/softphone/bulk-assign",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const userIds = Array.isArray(req.body?.user_ids) ? (req.body.user_ids as string[]) : [];
+      if (!userIds.length) throw new HttpError(400, "user_ids required");
+      res.json(await bulkAssignSoftphoneExtensions(userIds));
+    })
+  );
+
+  r.get(
+    "/settings/softphone/endpoints/export",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const format = String(req.query.format ?? "json");
+      const data = await exportSoftphoneEndpoints();
+      if (format === "pjsip") {
+        res.setHeader("Content-Type", "text/plain");
+        res.send(
+          renderPjsipEndpoints(
+            data.endpoints.map((e) => ({
+              extension: e.extension!,
+              password: e.password!,
+            })),
+            data.realm
+          )
+        );
+        return;
+      }
+      res.json(data);
+    })
+  );
+
+  r.use("/dialer", buildDialerRouter(app));
+
+  r.use((_req, res) => {
+    res.status(404).json({ error: "Not found" });
+  });
 
   return r;
 }

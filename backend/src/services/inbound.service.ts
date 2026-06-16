@@ -1,7 +1,8 @@
 import type { IncomingMessage } from "../channels/ChannelAdapter.js";
-import { prisma } from "../lib/prisma.js";
+import { getPrisma } from "../lib/prisma.js";
 import { canonicalPhone, phoneCandidates } from "../lib/phone.js";
 import { enqueueRouting } from "../queue/bull.js";
+import { scheduleInitialSlaCheck } from "./slaCheck.service.js";
 
 const OPEN_STATUSES = ["WAITING", "ASSIGNED", "ACTIVE", "ON_HOLD", "WRAP_UP"] as const;
 const STATUS_PRIORITY: Record<(typeof OPEN_STATUSES)[number], number> = {
@@ -38,7 +39,7 @@ export async function ingestIncomingMessage(
   if (!identifier) throw new Error("Incoming contact_identifier is invalid");
   const variants = phoneCandidates(identifier);
 
-  const existingContact = await prisma.contact.findFirst({
+  const existingContact = await getPrisma().contact.findFirst({
     where: {
       OR: [{ phone_wa: { in: variants } }, { phone: { in: variants } }],
     },
@@ -46,7 +47,7 @@ export async function ingestIncomingMessage(
 
   const contact =
     existingContact ??
-    (await prisma.contact.create({
+    (await getPrisma().contact.create({
       data: {
         name: incoming.contact_name,
         phone: identifier,
@@ -56,13 +57,13 @@ export async function ingestIncomingMessage(
     }));
 
   if (existingContact && incoming.contact_name && incoming.contact_name !== existingContact.name) {
-    await prisma.contact.update({
+    await getPrisma().contact.update({
       where: { id: existingContact.id },
       data: { name: incoming.contact_name },
     });
   }
 
-  const candidates = await prisma.conversation.findMany({
+  const candidates = await getPrisma().conversation.findMany({
     where: {
       channel_id: channelId,
       contact_id: contact.id,
@@ -79,8 +80,8 @@ export async function ingestIncomingMessage(
 
   let createdConversation = false;
   if (!conversation) {
-    const defaultQueue = await prisma.queue.findFirst({ where: { is_active: true } });
-    conversation = await prisma.conversation.create({
+    const defaultQueue = await getPrisma().queue.findFirst({ where: { is_active: true } });
+    conversation = await getPrisma().conversation.create({
       data: {
         channel_id: channelId,
         contact_id: contact.id,
@@ -96,7 +97,7 @@ export async function ingestIncomingMessage(
   const mappedType = mapIncomingContentType(incoming.content_type);
   const normalizedContent = incoming.content?.trim() || fallbackTextByType(mappedType);
 
-  const msg = await prisma.message.create({
+  const msg = await getPrisma().message.create({
     data: {
       conversation_id: conversation.id,
       sender_type: "CONTACT",
@@ -122,7 +123,7 @@ export async function ingestIncomingMessage(
     },
   });
 
-  await prisma.conversation.update({
+  await getPrisma().conversation.update({
     where: { id: conversation.id },
     data: {
       last_message_preview:
@@ -135,6 +136,9 @@ export async function ingestIncomingMessage(
 
   if (createdConversation) {
     await enqueueRouting({ conversationId: conversation.id });
+    if (conversation.queue_id) {
+      await scheduleInitialSlaCheck(conversation.id, conversation.queue_id);
+    }
   }
 
   return {

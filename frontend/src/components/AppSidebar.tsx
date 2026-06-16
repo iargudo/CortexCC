@@ -1,6 +1,6 @@
 import {
-  Inbox, LayoutDashboard, Users, ShieldCheck, Settings, Headphones, Phone, BarChart3, BookOpen, UserCog, Link, Shield,
-  FileBarChart, ArrowUpDown, UserCircle2,
+  Inbox, LayoutDashboard, Users, ShieldCheck, Settings, Headphones, PhoneOutgoing, BarChart3, BookOpen, UserCog, Link, Shield,
+  FileBarChart, ArrowUpDown, UserCircle2, Layers, Phone,
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -9,10 +9,9 @@ import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import {
   Sidebar, SidebarHeader, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel,
-  SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarFooter, useSidebar,
+  SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import { AgentStatusDot } from "@/components/StatusBadge";
 import { useAuthStore } from "@/stores/authStore";
 import type { AuthUser, PermissionKey } from "@/stores/authStore";
 import { apiJson } from "@/lib/api";
@@ -34,11 +33,13 @@ const mainItems: SidebarItem[] = [
   { title: "Contactos", url: "/contacts", icon: Users, requiredAll: ["contacts"] },
   { title: "Calidad", url: "/quality", icon: BarChart3, requiredAll: ["quality"] },
   { title: "Reportes", url: "/reports", icon: FileBarChart, requiredAll: ["reports"] },
+  { title: "Marcador", url: "/dialer", icon: PhoneOutgoing, requiredAny: ["settings", "inbox"] },
 ];
 
 const settingsItems: SidebarItem[] = [
-  { title: "Colas", url: "/settings/queues", icon: Phone, requiredAll: ["settings"] },
+  { title: "Colas", url: "/settings/queues", icon: Layers, requiredAll: ["settings"] },
   { title: "Canales", url: "/settings/channels", icon: Headphones, requiredAll: ["settings"] },
+  { title: "Telefonía", url: "/settings/telephony", icon: Phone, requiredAll: ["settings"] },
   { title: "Equipos", url: "/settings/teams", icon: UserCog, requiredAll: ["settings"] },
   { title: "Skills", url: "/settings/skills", icon: BookOpen, requiredAll: ["settings"] },
   { title: "Roles", url: "/settings/roles", icon: Shield, requiredAll: ["settings"] },
@@ -156,23 +157,6 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
       </SidebarContent>
-
-      <SidebarFooter className="p-3">
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <div className="w-8 h-8 rounded-full bg-sidebar-accent flex items-center justify-center text-xs font-bold text-sidebar-accent-foreground">
-              {user?.name?.split(" ").map(n => n[0]).join("").slice(0, 2) || "AG"}
-            </div>
-            <AgentStatusDot status={user?.status || "OFFLINE"} className="absolute -bottom-0.5 -right-0.5 ring-2 ring-sidebar-background" />
-          </div>
-          {!collapsed && (
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-sidebar-foreground truncate">{user?.name || "Agente"}</p>
-              <p className="text-[10px] text-sidebar-foreground/60 capitalize">{user?.role || "agente"}</p>
-            </div>
-          )}
-        </div>
-      </SidebarFooter>
     </Sidebar>
   );
 }
