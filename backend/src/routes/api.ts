@@ -2148,16 +2148,14 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     asyncHandler(async (req, res) => {
       const body = req.body as {
-        server?: string;
-        realm?: string;
-        displayName?: string;
-        stunServers?: string[];
-        iceGatheringTimeout?: number;
         extension?: string;
         password?: string;
       };
 
-      const canUpdateShared = req.authUser!.roles.some((r) => r.name === "admin" || r.name === "supervisor");
+      // El softphone del agente solo gestiona su propia credencial SIP.
+      // El host PBX, realm, STUN y demás ajustes de central se gobiernan
+      // exclusivamente desde Configuración → Telefonía para evitar que dos
+      // pantallas escriban la misma configuración con reglas distintas.
       const trimmedExtension = String(body.extension ?? "").trim();
       const rawPassword = String(body.password ?? "");
 
@@ -2169,36 +2167,6 @@ export function buildApiRouter(app: Express): Router {
         },
       });
 
-      if (canUpdateShared) {
-        const stunServers =
-          Array.isArray(body.stunServers) && body.stunServers.length > 0
-            ? body.stunServers.map((s) => String(s).trim()).filter(Boolean)
-            : ["stun:stun.l.google.com:19302"];
-        const iceGatheringTimeout =
-          typeof body.iceGatheringTimeout === "number" && Number.isFinite(body.iceGatheringTimeout)
-            ? Math.max(1000, Math.min(30000, Math.round(body.iceGatheringTimeout)))
-            : 5000;
-
-        await getPrisma().organizationSettings.upsert({
-          where: { id: "default" },
-          create: {
-            id: "default",
-            sip_server: String(body.server ?? "").trim() || null,
-            sip_realm: String(body.realm ?? "").trim() || null,
-            sip_display_name: String(body.displayName ?? "").trim() || null,
-            sip_stun_servers: stunServers,
-            sip_ice_gathering_timeout: iceGatheringTimeout,
-          },
-          update: {
-            sip_server: String(body.server ?? "").trim() || null,
-            sip_realm: String(body.realm ?? "").trim() || null,
-            sip_display_name: String(body.displayName ?? "").trim() || null,
-            sip_stun_servers: stunServers,
-            sip_ice_gathering_timeout: iceGatheringTimeout,
-          },
-        });
-      }
-
       const org = await getPrisma().organizationSettings.findUnique({ where: { id: "default" } });
       const user = await getPrisma().user.findUnique({
         where: { id: req.authUser!.id },
@@ -2207,7 +2175,6 @@ export function buildApiRouter(app: Express): Router {
 
       res.json({
         ok: true,
-        shared_updated: canUpdateShared,
         config: {
           server: org?.sip_server ?? "",
           realm: org?.sip_realm ?? "",

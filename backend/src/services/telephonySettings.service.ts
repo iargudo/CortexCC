@@ -206,6 +206,21 @@ export async function saveTelephonySettings(input: SaveTelephonyInput): Promise<
       where: { id: voiceChannel.id },
       data: { config: parsed as object },
     });
+  } else if (
+    input.voice &&
+    String((input.voice as Record<string, unknown>).ariUsername ?? "").trim() &&
+    String((input.voice as Record<string, unknown>).ariPassword ?? "").trim()
+  ) {
+    // No existe canal VOICE todavía: lo creamos aquí para que toda la
+    // configuración de voz viva en Telefonía. Queda inactivo hasta que el
+    // admin lo active en Configuración → Canales.
+    const parsed: VoiceChannelConfig = parseVoiceChannelConfig({
+      ...input.voice,
+      ariBaseUrl: derived.ariBaseUrl,
+    });
+    await getPrisma().channel.create({
+      data: { name: "Voz", type: "VOICE", status: "inactive", config: parsed as object },
+    });
   }
 
   return getTelephonySettings();

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,6 @@ import type { ChannelType } from "@/data/mock";
 import { Plus, Edit2, Settings, Zap, Eye, Copy } from "lucide-react";
 import { apiJson, getApiBase } from "@/lib/api";
 import { buildWhatsAppWebhookUrl } from "@/lib/webhookUrls";
-import { VoiceChannelFields } from "@/components/settings/VoiceChannelFields";
 import { WhatsAppChannelFields } from "@/components/settings/WhatsAppChannelFields";
 import {
   buildWhatsAppConfig,
@@ -24,14 +24,6 @@ import {
   whatsAppProviderLabel,
   type WhatsAppForm,
 } from "@/lib/whatsappChannelConfig";
-import {
-  buildVoiceConfig,
-  defaultVoiceForm,
-  parseVoiceForm,
-  type AriTestResult,
-  type VoiceForm,
-} from "@/lib/voiceChannelConfig";
-import type { TelephonySettingsView } from "@/lib/telephonySettings";
 
 type ApiChannel = {
   id: string;
@@ -42,7 +34,9 @@ type ApiChannel = {
   whatsapp_provider?: string;
 };
 
-const TYPES: ChannelType[] = ["WHATSAPP", "EMAIL", "VOICE", "WEBCHAT", "TEAMS"];
+// VOICE se crea y configura de forma centralizada en Configuración → Telefonía,
+// por eso no se ofrece como tipo creable aquí.
+const TYPES: ChannelType[] = ["WHATSAPP", "EMAIL", "WEBCHAT", "TEAMS"];
 type EmailForm = {
   smtpHost: string;
   smtpPort: string;
@@ -133,7 +127,6 @@ function channelConfigLabel(type: ChannelType): string {
 }
 
 function channelDialogClassName(type: ChannelType): string {
-  if (type === "VOICE") return "sm:max-w-2xl max-h-[90vh] overflow-y-auto";
   if (type === "WHATSAPP") return "sm:max-w-lg max-h-[90vh] overflow-y-auto";
   return "sm:max-w-md";
 }
@@ -202,6 +195,21 @@ function EmailChannelFields({
   );
 }
 
+function VoiceConfigPointer() {
+  return (
+    <div className="rounded-md border bg-muted/40 px-3 py-3 text-[11px] text-muted-foreground space-y-1">
+      <p className="text-foreground font-medium">Configuración centralizada</p>
+      <p>
+        Los parámetros de voz (ARI, trunk, dialplan y eventos) se gestionan en{" "}
+        <Link to="/settings/telephony" className="text-foreground underline">
+          Configuración → Telefonía
+        </Link>
+        . Aquí solo defines el nombre y el estado del canal.
+      </p>
+    </div>
+  );
+}
+
 function ChannelConfigSection({
   channelType,
   channelId,
@@ -209,14 +217,8 @@ function ChannelConfigSection({
   onWaFormChange,
   emailForm,
   onEmailFormChange,
-  voiceForm,
-  onVoiceFormChange,
   cConfig,
   onCConfigChange,
-  onTestAri,
-  ariTestPending,
-  ariTestResult,
-  derivedAriBaseUrl,
 }: {
   channelType: ChannelType;
   channelId?: string;
@@ -224,14 +226,8 @@ function ChannelConfigSection({
   onWaFormChange: (patch: Partial<WhatsAppForm> | ((prev: WhatsAppForm) => WhatsAppForm)) => void;
   emailForm: EmailForm;
   onEmailFormChange: (patch: Partial<EmailForm>) => void;
-  voiceForm: VoiceForm;
-  onVoiceFormChange: (patch: Partial<VoiceForm>) => void;
   cConfig: string;
   onCConfigChange: (value: string) => void;
-  onTestAri?: () => void;
-  ariTestPending?: boolean;
-  ariTestResult?: AriTestResult | null;
-  derivedAriBaseUrl?: string;
 }) {
   return (
     <div>
@@ -241,14 +237,7 @@ function ChannelConfigSection({
       ) : channelType === "EMAIL" ? (
         <EmailChannelFields form={emailForm} onChange={onEmailFormChange} />
       ) : channelType === "VOICE" ? (
-        <VoiceChannelFields
-          form={voiceForm}
-          onChange={onVoiceFormChange}
-          onTestAri={onTestAri}
-          ariTestPending={ariTestPending}
-          ariTestResult={ariTestResult}
-          derivedAriBaseUrl={derivedAriBaseUrl}
-        />
+        <VoiceConfigPointer />
       ) : (
         <Textarea
           value={cConfig}
@@ -272,20 +261,11 @@ export default function SettingsChannelsPage() {
   const [cConfig, setCConfig] = useState("{}\n");
   const [waForm, setWaForm] = useState<WhatsAppForm>(defaultWhatsAppForm());
   const [emailForm, setEmailForm] = useState<EmailForm>(defaultEmailForm());
-  const [voiceForm, setVoiceForm] = useState<VoiceForm>(defaultVoiceForm());
-  const [ariTestResult, setAriTestResult] = useState<AriTestResult | null>(null);
 
   const { data: channels = [], isLoading, error } = useQuery({
     queryKey: ["settings", "channels"],
     queryFn: () => apiJson<ApiChannel[]>("/settings/channels"),
   });
-
-  const { data: telephony } = useQuery({
-    queryKey: ["settings", "telephony"],
-    queryFn: () => apiJson<TelephonySettingsView>("/settings/telephony"),
-  });
-
-  const derivedAriBaseUrl = telephony?.derived.ariBaseUrl || undefined;
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ["settings", "channels"] });
 
@@ -303,64 +283,27 @@ export default function SettingsChannelsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const testVoiceAriMut = useMutation({
-    mutationFn: () => {
-      const ariUrl = derivedAriBaseUrl ?? voiceForm.ariBaseUrl;
-      return apiJson<AriTestResult>("/settings/channels/voice/test", {
-        method: "POST",
-        body: JSON.stringify({
-          config: buildVoiceConfig({ ...voiceForm, ariBaseUrl: ariUrl }),
-        }),
-      });
-    },
-    onSuccess: (r) => {
-      setAriTestResult(r);
-      if (r.ok) {
-        toast.success(r.detail ?? "Conexión ARI correcta");
-        r.warnings?.forEach((warning) => toast.warning(warning));
-      } else {
-        toast.error(r.detail ?? "Error de conexión ARI");
-      }
-    },
-    onError: (e: Error) => {
-      setAriTestResult({ ok: false, detail: e.message });
-      toast.error(e.message);
-    },
-  });
-
-  const runVoiceAriTest = () => {
-    const ariUrl = derivedAriBaseUrl ?? voiceForm.ariBaseUrl;
-    if (!ariUrl.trim() || !voiceForm.ariUsername.trim() || !voiceForm.ariPassword.trim()) {
-      toast.error("Completa URL ARI (o host PBX en Telefonía), usuario y contraseña antes de probar");
-      return;
-    }
-    setAriTestResult(null);
-    testVoiceAriMut.mutate();
-  };
-
   const updateMut = useMutation({
     mutationFn: async () => {
       if (!editing) return;
-      let config: object;
+      const payload: Record<string, unknown> = { name: cName.trim(), status: cStatus };
       if (editing.type === "WHATSAPP") {
         const waError = validateWhatsAppForm(waForm);
         if (waError) throw new Error(waError);
-        config = buildWhatsAppConfig(waForm);
+        payload.config = buildWhatsAppConfig(waForm);
       } else if (editing.type === "EMAIL") {
-        config = buildEmailConfig(emailForm);
-      } else if (editing.type === "VOICE") {
-        const ariUrl = derivedAriBaseUrl ?? voiceForm.ariBaseUrl;
-        config = buildVoiceConfig({ ...voiceForm, ariBaseUrl: ariUrl });
-      } else {
+        payload.config = buildEmailConfig(emailForm);
+      } else if (editing.type !== "VOICE") {
+        // VOICE no envía config: se gestiona en Telefonía y se preserva en el backend.
         try {
-          config = JSON.parse(cConfig || "{}") as object;
+          payload.config = JSON.parse(cConfig || "{}") as object;
         } catch {
           throw new Error("Config JSON inválido");
         }
       }
       await apiJson(`/settings/channels/${editing.id}`, {
         method: "PUT",
-        body: JSON.stringify({ name: cName.trim(), status: cStatus, config }),
+        body: JSON.stringify(payload),
       });
     },
     onSuccess: () => {
@@ -380,9 +323,6 @@ export default function SettingsChannelsPage() {
         config = buildWhatsAppConfig(waForm);
       } else if (cType === "EMAIL") {
         config = buildEmailConfig(emailForm);
-      } else if (cType === "VOICE") {
-        const ariUrl = derivedAriBaseUrl ?? voiceForm.ariBaseUrl;
-        config = buildVoiceConfig({ ...voiceForm, ariBaseUrl: ariUrl });
       } else {
         try {
           config = JSON.parse(cConfig || "{}") as object;
@@ -447,7 +387,6 @@ export default function SettingsChannelsPage() {
             setCConfig("{}");
             setWaForm(defaultWhatsAppForm());
             setEmailForm(defaultEmailForm());
-            setVoiceForm(defaultVoiceForm());
             setCreateOpen(true);
           }}
         >
@@ -521,7 +460,6 @@ export default function SettingsChannelsPage() {
                     onClick={() => {
                       void (async () => {
                         setEditing(ch);
-                        setAriTestResult(null);
                         setCName(ch.name);
                         setCStatus(ch.status);
                         try {
@@ -530,12 +468,10 @@ export default function SettingsChannelsPage() {
                           setCConfig(JSON.stringify(cfg, null, 2));
                           if (ch.type === "WHATSAPP") setWaForm(parseWhatsAppForm(cfg));
                           if (ch.type === "EMAIL") setEmailForm(parseEmailForm(cfg));
-                          if (ch.type === "VOICE") setVoiceForm(parseVoiceForm(cfg));
                         } catch {
                           setCConfig("{}");
                           if (ch.type === "WHATSAPP") setWaForm(defaultWhatsAppForm());
                           if (ch.type === "EMAIL") setEmailForm(defaultEmailForm());
-                          if (ch.type === "VOICE") setVoiceForm(defaultVoiceForm());
                         }
                         setEditOpen(true);
                       })();
@@ -631,17 +567,8 @@ export default function SettingsChannelsPage() {
                 onWaFormChange={setWaForm}
                 emailForm={emailForm}
                 onEmailFormChange={(patch) => setEmailForm((p) => ({ ...p, ...patch }))}
-                voiceForm={voiceForm}
-                onVoiceFormChange={(patch) => {
-                  setVoiceForm((p) => ({ ...p, ...patch }));
-                  setAriTestResult(null);
-                }}
                 cConfig={cConfig}
                 onCConfigChange={setCConfig}
-                onTestAri={runVoiceAriTest}
-                ariTestPending={testVoiceAriMut.isPending}
-                ariTestResult={ariTestResult}
-                derivedAriBaseUrl={derivedAriBaseUrl}
               />
             </div>
           )}
@@ -675,10 +602,6 @@ export default function SettingsChannelsPage() {
                   setCType(nextType);
                   if (nextType === "WHATSAPP") setWaForm(defaultWhatsAppForm());
                   if (nextType === "EMAIL") setEmailForm(defaultEmailForm());
-                  if (nextType === "VOICE") {
-                    setVoiceForm(defaultVoiceForm());
-                    setAriTestResult(null);
-                  }
                 }}
               >
                 <SelectTrigger className="h-8 text-sm">
@@ -711,17 +634,8 @@ export default function SettingsChannelsPage() {
               onWaFormChange={setWaForm}
               emailForm={emailForm}
               onEmailFormChange={(patch) => setEmailForm((p) => ({ ...p, ...patch }))}
-              voiceForm={voiceForm}
-              onVoiceFormChange={(patch) => {
-                setVoiceForm((p) => ({ ...p, ...patch }));
-                setAriTestResult(null);
-              }}
               cConfig={cConfig}
               onCConfigChange={setCConfig}
-              onTestAri={runVoiceAriTest}
-              ariTestPending={testVoiceAriMut.isPending}
-              ariTestResult={ariTestResult}
-              derivedAriBaseUrl={derivedAriBaseUrl}
             />
           </div>
           <DialogFooter>

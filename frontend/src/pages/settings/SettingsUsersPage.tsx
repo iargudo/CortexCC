@@ -8,9 +8,10 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Pencil, Plus } from "lucide-react";
+import { Pencil, Plus, Phone, Wand2, Copy } from "lucide-react";
 import { apiJson } from "@/lib/api";
 import { useAuthStore } from "@/stores/authStore";
+import type { TelephonySettingsView } from "@/lib/telephonySettings";
 
 type ApiUser = {
   id: string;
@@ -19,10 +20,16 @@ type ApiUser = {
   last_name: string;
   status: string;
   max_concurrent: number;
+  sip_extension?: string | null;
   roles: { role: { id: string; name: string } }[];
 };
 
 type RoleRow = { id: string; name: string };
+
+type SoftphoneAssignResult = {
+  user: { id: string; sip_extension: string | null };
+  password: string;
+};
 
 const ASSIGNABLE_ROLES = ["agent", "supervisor", "admin"] as const;
 
@@ -54,11 +61,57 @@ export default function SettingsUsersPage() {
   const [editStatus, setEditStatus] = useState<string>("OFFLINE");
   const [editRoleName, setEditRoleName] = useState<string>("agent");
   const [editNewPassword, setEditNewPassword] = useState("");
+  const [editSipExtension, setEditSipExtension] = useState("");
+  const [editSipPassword, setEditSipPassword] = useState("");
+  const [assignedSipPassword, setAssignedSipPassword] = useState<string | null>(null);
 
   const usersQuery = useQuery({
     queryKey: ["settings", "users"],
     queryFn: () => apiJson<ApiUser[]>("/users"),
     enabled: isAdmin,
+  });
+
+  const telephonyQuery = useQuery({
+    queryKey: ["settings", "telephony"],
+    queryFn: () => apiJson<TelephonySettingsView>("/settings/telephony"),
+    enabled: isAdmin,
+  });
+
+  const extensionRange = telephonyQuery.data?.softphone
+    ? `${telephonyQuery.data.softphone.extensionRangeStart}–${telephonyQuery.data.softphone.extensionRangeEnd}`
+    : "7001–7099";
+
+  const assignSipMut = useMutation({
+    mutationFn: () => {
+      if (!editUserId) throw new Error("Usuario no seleccionado");
+      const payload: { extension?: string; password?: string } = {};
+      if (editSipExtension.trim()) payload.extension = editSipExtension.trim();
+      if (editSipPassword.trim()) payload.password = editSipPassword.trim();
+      return apiJson<SoftphoneAssignResult>(`/settings/users/${editUserId}/softphone`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    },
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ["settings", "users"] });
+      setEditSipExtension(res.user.sip_extension ?? "");
+      setAssignedSipPassword(res.password);
+      toast.success(`Extensión ${res.user.sip_extension ?? ""} asignada`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const bulkAssignMut = useMutation({
+    mutationFn: (userIds: string[]) =>
+      apiJson<{ userId: string; extension: string; password: string }[]>(
+        "/settings/users/softphone/bulk-assign",
+        { method: "POST", body: JSON.stringify({ user_ids: userIds }) }
+      ),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ["settings", "users"] });
+      toast.success(`${res.length} extensión(es) asignada(s). Exporta credenciales desde Telefonía si las necesitas.`);
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const rolesQuery = useQuery({
@@ -130,7 +183,28 @@ export default function SettingsUsersPage() {
     setEditStatus(u.status);
     setEditRoleName(primaryRoleName(u.roles));
     setEditNewPassword("");
+    setEditSipExtension(u.sip_extension ?? "");
+    setEditSipPassword("");
+    setAssignedSipPassword(null);
     setEditOpen(true);
+  };
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copiada`);
+    } catch {
+      toast.error(`No se pudo copiar ${label.toLowerCase()}`);
+    }
+  };
+
+  const handleBulkAssign = () => {
+    const pending = (usersQuery.data ?? []).filter((u) => !u.sip_extension).map((u) => u.id);
+    if (pending.length === 0) {
+      toast.info("Todos los usuarios ya tienen extensión asignada.");
+      return;
+    }
+    bulkAssignMut.mutate(pending);
   };
 
   const handleUpdate = () => {
@@ -181,9 +255,20 @@ export default function SettingsUsersPage() {
     <div className="p-6 overflow-y-auto h-full scrollbar-thin space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Usuarios</h1>
-        <Button size="sm" className="gap-1" onClick={() => setCreateOpen(true)}>
-          <Plus size={14} /> Nuevo usuario
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1"
+            onClick={handleBulkAssign}
+            disabled={bulkAssignMut.isPending}
+          >
+            <Wand2 size={14} /> Auto-asignar extensiones
+          </Button>
+          <Button size="sm" className="gap-1" onClick={() => setCreateOpen(true)}>
+            <Plus size={14} /> Nuevo usuario
+          </Button>
+        </div>
       </div>
 
       {usersQuery.error && (
@@ -202,6 +287,7 @@ export default function SettingsUsersPage() {
                 <th className="text-left p-3 font-medium">Nombre</th>
                 <th className="text-left p-3 font-medium">Email</th>
                 <th className="text-left p-3 font-medium">Roles</th>
+                <th className="text-center p-3 font-medium">Ext. SIP</th>
                 <th className="text-center p-3 font-medium">Estado</th>
                 <th className="text-center p-3 font-medium">Max. concurrentes</th>
                 <th className="text-right p-3 font-medium w-[100px]">Acciones</th>
@@ -222,6 +308,15 @@ export default function SettingsUsersPage() {
                         </Badge>
                       ))}
                     </div>
+                  </td>
+                  <td className="p-3 text-center">
+                    {u.sip_extension ? (
+                      <Badge variant="secondary" className="text-[10px] font-mono">
+                        {u.sip_extension}
+                      </Badge>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground">Sin asignar</span>
+                    )}
                   </td>
                   <td className="p-3 text-center">
                     <Badge variant="outline" className="text-[10px]">
@@ -401,6 +496,72 @@ export default function SettingsUsersPage() {
               <p className="text-[10px] text-muted-foreground mt-1">
                 Si la cambias, el usuario deberá volver a iniciar sesión en el resto de dispositivos.
               </p>
+            </div>
+
+            <div className="rounded-md border bg-muted/20 p-3 space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Phone size={13} className="text-muted-foreground" />
+                <Label className="text-xs font-semibold">Telefonía (Softphone SIP)</Label>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Extensión que usará el agente para conectar el softphone. Rango configurado:{" "}
+                <span className="font-mono text-foreground">{extensionRange}</span>.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-[11px] text-muted-foreground">Extensión</Label>
+                  <Input
+                    value={editSipExtension}
+                    onChange={(e) => setEditSipExtension(e.target.value)}
+                    placeholder="Auto (siguiente libre)"
+                    className="h-8 text-sm font-mono"
+                  />
+                </div>
+                <div>
+                  <Label className="text-[11px] text-muted-foreground">Contraseña SIP</Label>
+                  <Input
+                    value={editSipPassword}
+                    onChange={(e) => setEditSipPassword(e.target.value)}
+                    placeholder="Auto (generada)"
+                    className="h-8 text-sm font-mono"
+                  />
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5"
+                disabled={assignSipMut.isPending}
+                onClick={() => {
+                  setAssignedSipPassword(null);
+                  assignSipMut.mutate();
+                }}
+              >
+                <Wand2 size={12} />
+                {editSipExtension.trim() ? "Asignar / actualizar extensión" : "Asignar extensión automática"}
+              </Button>
+              {assignedSipPassword && (
+                <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-2 text-[11px] space-y-1">
+                  <p className="text-emerald-700 dark:text-emerald-300">
+                    Extensión asignada. Comparte estas credenciales con el agente:
+                  </p>
+                  <div className="flex items-center gap-2 font-mono">
+                    <span>Ext: {editSipExtension || "—"}</span>
+                    <span>·</span>
+                    <span>Clave: {assignedSipPassword}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => void copyToClipboard(assignedSipPassword, "Contraseña SIP")}
+                    >
+                      <Copy size={11} />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

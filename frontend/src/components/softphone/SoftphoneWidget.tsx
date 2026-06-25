@@ -335,11 +335,6 @@ export function SoftphoneWidget({ onClose }: { onClose: () => void }) {
                 await apiJson("/settings/softphone/me", {
                   method: "PUT",
                   body: JSON.stringify({
-                    server: config.server,
-                    realm: config.realm,
-                    displayName: config.displayName,
-                    stunServers: config.stunServers,
-                    iceGatheringTimeout: config.iceGatheringTimeout,
                     extension: config.extension,
                     password: config.password,
                   }),

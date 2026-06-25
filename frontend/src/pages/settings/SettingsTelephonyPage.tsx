@@ -87,23 +87,90 @@ export default function SettingsTelephonyPage() {
   const derivedPreview = query.data?.derived;
   const validation = query.data?.validation;
   const voiceStatus = query.data?.voiceChannel.status;
+  const needsSetup = !query.isLoading && !query.error && !query.data?.pbxHost?.trim();
 
   const patchForm = (patch: Partial<TelephonyForm>) => setForm((prev) => ({ ...prev, ...patch }));
 
   return (
-    <div className="p-6 overflow-y-auto h-full scrollbar-thin space-y-6 max-w-4xl">
-      <div>
-        <h1 className="text-xl font-bold flex items-center gap-2">
-          <Phone size={20} />
-          Telefonía / PBX
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Un solo host Asterisk alimenta el softphone de agentes (WSS/SIP) y la plataforma de contact center (ARI).
-        </p>
+    <div className="p-6 overflow-y-auto h-full scrollbar-thin space-y-6 w-full max-w-7xl mx-auto">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold flex items-center gap-2">
+            <Phone size={20} />
+            Telefonía / PBX
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Un solo host Asterisk alimenta el softphone de agentes (WSS/SIP) y la plataforma de contact center (ARI).
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            size="sm"
+            onClick={() => saveMut.mutate()}
+            disabled={!form.pbxHost.trim() || saveMut.isPending}
+            className="gap-1.5"
+          >
+            {saveMut.isPending ? <Loader2 size={14} className="animate-spin" /> : null}
+            Guardar telefonía
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            disabled={testAriMut.isPending}
+            onClick={() => {
+              if (!form.pbxHost.trim() || !form.voice.ariUsername.trim() || !form.voice.ariPassword.trim()) {
+                toast.error("Completa host PBX, usuario y contraseña ARI antes de probar");
+                return;
+              }
+              setAriTestResult(null);
+              testAriMut.mutate();
+            }}
+          >
+            {testAriMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+            Probar ARI
+          </Button>
+        </div>
       </div>
 
       {query.isLoading && <p className="text-sm text-muted-foreground">Cargando…</p>}
       {query.error && <p className="text-sm text-destructive">{(query.error as Error).message}</p>}
+
+      {needsSetup && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Server size={15} />
+              Configura tu central en 3 pasos
+            </CardTitle>
+            <CardDescription>
+              Aún no hay un host PBX definido. Indica un solo host de Asterisk y el resto se deriva
+              automáticamente.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground space-y-1.5">
+            <p>
+              <span className="text-foreground font-semibold">1.</span> Escribe el host/FQDN del PBX
+              y los puertos WSS (softphone) y ARI (backend).
+            </p>
+            <p>
+              <span className="text-foreground font-semibold">2.</span> Completa las credenciales ARI
+              y prueba la conexión con la central.
+            </p>
+            <p>
+              <span className="text-foreground font-semibold">3.</span> Activa el canal de voz en{" "}
+              <Link to="/settings/channels" className="text-foreground underline">
+                Configuración → Canales
+              </Link>{" "}
+              y asigna extensiones a los agentes en{" "}
+              <Link to="/settings/users" className="text-foreground underline">
+                Usuarios
+              </Link>
+              .
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {validation && (validation.warnings.length > 0 || validation.errors.length > 0) && (
         <Card className="border-amber-500/40 bg-amber-500/5">
@@ -126,6 +193,8 @@ export default function SettingsTelephonyPage() {
         </Card>
       )}
 
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+      <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -230,7 +299,9 @@ export default function SettingsTelephonyPage() {
           </div>
         </CardContent>
       </Card>
+      </div>
 
+      <div className="space-y-6">
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-2">
@@ -254,7 +325,8 @@ export default function SettingsTelephonyPage() {
         <CardContent>
           {!query.data?.voiceChannel.id && (
             <p className="text-xs text-amber-600 mb-3">
-              Crea un canal tipo VOICE en{" "}
+              Aún no existe un canal VOICE. Se creará automáticamente al guardar si completas usuario y
+              contraseña ARI. Luego actívalo en{" "}
               <Link to="/settings/channels" className="underline">
                 Configuración → Canales
               </Link>{" "}
@@ -283,32 +355,7 @@ export default function SettingsTelephonyPage() {
           />
         </CardContent>
       </Card>
-
-      <div className="flex items-center gap-2 pb-8">
-        <Button
-          onClick={() => saveMut.mutate()}
-          disabled={!form.pbxHost.trim() || saveMut.isPending}
-          className="gap-1.5"
-        >
-          {saveMut.isPending ? <Loader2 size={14} className="animate-spin" /> : null}
-          Guardar telefonía
-        </Button>
-        <Button
-          variant="outline"
-          className="gap-1.5"
-          disabled={testAriMut.isPending}
-          onClick={() => {
-            if (!form.pbxHost.trim() || !form.voice.ariUsername.trim() || !form.voice.ariPassword.trim()) {
-              toast.error("Completa host PBX, usuario y contraseña ARI antes de probar");
-              return;
-            }
-            setAriTestResult(null);
-            testAriMut.mutate();
-          }}
-        >
-          {testAriMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-          Probar ARI
-        </Button>
+      </div>
       </div>
     </div>
   );

@@ -1,9 +1,10 @@
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { AriTestResult, VoiceForm } from "@/lib/voiceChannelConfig";
-import { Loader2, Zap } from "lucide-react";
+import { Loader2, Lock, Zap } from "lucide-react";
 
 type Props = {
   form: VoiceForm;
@@ -13,6 +14,8 @@ type Props = {
   ariTestResult?: AriTestResult | null;
   /** Si se define, la URL ARI se deriva del host PBX y no es editable aquí. */
   derivedAriBaseUrl?: string;
+  /** Si es true, toda la configuración se gobierna desde Telefonía y aquí es de solo lectura. */
+  readOnly?: boolean;
 };
 
 export function VoiceChannelFields({
@@ -22,9 +25,26 @@ export function VoiceChannelFields({
   ariTestPending,
   ariTestResult,
   derivedAriBaseUrl,
+  readOnly = false,
 }: Props) {
+  const ro = readOnly;
+  const inputCls = (extra = "") => `h-8 text-sm ${extra} ${ro ? "bg-muted/50 cursor-default" : ""}`.trim();
+
   return (
     <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+      {ro && (
+        <div className="md:col-span-2 rounded-md border bg-muted/40 px-3 py-2 flex items-start gap-2">
+          <Lock size={13} className="text-muted-foreground mt-0.5 shrink-0" />
+          <p className="text-[11px] text-muted-foreground leading-snug">
+            La telefonía está centralizada. Estos parámetros se gestionan en{" "}
+            <Link to="/settings/telephony" className="text-foreground underline">
+              Configuración → Telefonía
+            </Link>
+            . Aquí solo puedes activar o desactivar el canal y probar la conexión.
+          </p>
+        </div>
+      )}
+
       <Label className="text-xs font-semibold md:col-span-2">Asterisk ARI</Label>
       <p className="text-[11px] text-muted-foreground md:col-span-2">
         Debe coincidir con <code className="text-[10px]">ari.conf</code>: usuario, contraseña y nombre de app Stasis.
@@ -44,7 +64,8 @@ export function VoiceChannelFields({
             placeholder="http://localhost:8074"
             value={form.ariBaseUrl}
             onChange={(e) => onChange({ ariBaseUrl: e.target.value })}
-            className="h-8 text-sm"
+            readOnly={ro}
+            className={inputCls()}
           />
         )}
       </div>
@@ -54,7 +75,8 @@ export function VoiceChannelFields({
           placeholder="cortexcc"
           value={form.ariApp}
           onChange={(e) => onChange({ ariApp: e.target.value })}
-          className="h-8 text-sm font-mono"
+          readOnly={ro}
+          className={inputCls("font-mono")}
         />
       </div>
       <div>
@@ -63,7 +85,8 @@ export function VoiceChannelFields({
           placeholder="cortexcc"
           value={form.ariUsername}
           onChange={(e) => onChange({ ariUsername: e.target.value })}
-          className="h-8 text-sm font-mono"
+          readOnly={ro}
+          className={inputCls("font-mono")}
         />
       </div>
       <div className="md:col-span-2">
@@ -73,7 +96,8 @@ export function VoiceChannelFields({
           type="password"
           value={form.ariPassword}
           onChange={(e) => onChange({ ariPassword: e.target.value })}
-          className="h-8 text-sm"
+          readOnly={ro}
+          className={inputCls()}
         />
       </div>
       {onTestAri && (
@@ -118,7 +142,8 @@ export function VoiceChannelFields({
           placeholder="PJSIP/carrier-trunk"
           value={form.outboundTrunkEndpoint}
           onChange={(e) => onChange({ outboundTrunkEndpoint: e.target.value })}
-          className="h-8 text-sm font-mono"
+          readOnly={ro}
+          className={inputCls("font-mono")}
         />
       </div>
       <div>
@@ -127,7 +152,8 @@ export function VoiceChannelFields({
           placeholder="outbound-trunk"
           value={form.outboundContext}
           onChange={(e) => onChange({ outboundContext: e.target.value })}
-          className="h-8 text-sm font-mono"
+          readOnly={ro}
+          className={inputCls("font-mono")}
         />
       </div>
       <div>
@@ -136,7 +162,8 @@ export function VoiceChannelFields({
           placeholder="+34900123456"
           value={form.defaultCallerId}
           onChange={(e) => onChange({ defaultCallerId: e.target.value })}
-          className="h-8 text-sm font-mono"
+          readOnly={ro}
+          className={inputCls("font-mono")}
         />
       </div>
       <div className="md:col-span-2">
@@ -145,7 +172,8 @@ export function VoiceChannelFields({
           placeholder="PJSIP/{extension}"
           value={form.agentEndpointTemplate}
           onChange={(e) => onChange({ agentEndpointTemplate: e.target.value })}
-          className="h-8 text-sm font-mono"
+          readOnly={ro}
+          className={inputCls("font-mono")}
         />
       </div>
 
@@ -159,7 +187,8 @@ export function VoiceChannelFields({
           placeholder="30"
           value={form.ringTimeoutSec}
           onChange={(e) => onChange({ ringTimeoutSec: e.target.value })}
-          className="h-8 text-sm"
+          readOnly={ro}
+          className={inputCls()}
         />
       </div>
       <div>
@@ -168,7 +197,8 @@ export function VoiceChannelFields({
           placeholder="default"
           value={form.mohClass}
           onChange={(e) => onChange({ mohClass: e.target.value })}
-          className="h-8 text-sm"
+          readOnly={ro}
+          className={inputCls()}
         />
       </div>
       <div className="flex items-center justify-between rounded-md border px-3 py-2 md:col-span-2">
@@ -176,7 +206,11 @@ export function VoiceChannelFields({
           <Label className="text-xs">Grabación de llamadas</Label>
           <p className="text-[11px] text-muted-foreground">Activa grabación cuando el canal lo soporte en Asterisk.</p>
         </div>
-        <Switch checked={form.recordingEnabled} onCheckedChange={(checked) => onChange({ recordingEnabled: checked })} />
+        <Switch
+          checked={form.recordingEnabled}
+          disabled={ro}
+          onCheckedChange={(checked) => onChange({ recordingEnabled: checked })}
+        />
       </div>
 
       <Label className="text-xs font-semibold pt-2 md:col-span-2">Mapeo de eventos ARI</Label>
@@ -189,7 +223,8 @@ export function VoiceChannelFields({
           placeholder="channel.caller.number"
           value={form.callerIdField}
           onChange={(e) => onChange({ callerIdField: e.target.value })}
-          className="h-8 text-sm font-mono"
+          readOnly={ro}
+          className={inputCls("font-mono")}
         />
       </div>
       <div>
@@ -198,7 +233,8 @@ export function VoiceChannelFields({
           placeholder="channel.dialplan.exten"
           value={form.dialedNumberField}
           onChange={(e) => onChange({ dialedNumberField: e.target.value })}
-          className="h-8 text-sm font-mono"
+          readOnly={ro}
+          className={inputCls("font-mono")}
         />
       </div>
       <div>
@@ -207,7 +243,8 @@ export function VoiceChannelFields({
           placeholder="endpoint"
           value={form.extensionField}
           onChange={(e) => onChange({ extensionField: e.target.value })}
-          className="h-8 text-sm font-mono"
+          readOnly={ro}
+          className={inputCls("font-mono")}
         />
       </div>
       <div>
@@ -219,7 +256,8 @@ export function VoiceChannelFields({
           placeholder="15"
           value={form.pollFallbackSec}
           onChange={(e) => onChange({ pollFallbackSec: e.target.value })}
-          className="h-8 text-sm"
+          readOnly={ro}
+          className={inputCls()}
         />
       </div>
     </div>

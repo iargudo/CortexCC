@@ -1,9 +1,10 @@
+import { useState } from "react";
 import { useSipStore } from "@/stores/sipStore";
 import { checkSoftphoneConfig } from "@/lib/softphoneDiagnostics";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Settings, X, Server, User, Key, Globe } from "lucide-react";
+import { Settings, X, Server, User, Key, Globe, Lock, ChevronDown, Wifi } from "lucide-react";
 
 interface Props {
   onClose: () => void;
@@ -12,6 +13,7 @@ interface Props {
 
 export function SoftphoneConfig({ onClose, onSave }: Props) {
   const { config, setConfig } = useSipStore();
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const configCheck = checkSoftphoneConfig(config);
   const certUrl = config.server?.trim().startsWith("wss://")
     ? config.server.trim().replace(/^wss:\/\//, "https://")
@@ -33,6 +35,15 @@ export function SoftphoneConfig({ onClose, onSave }: Props) {
         <p className="text-[10px] text-destructive leading-snug">{configCheck.issue}</p>
       )}
 
+      <div className="rounded-md border bg-muted/30 px-2.5 py-2 flex items-start gap-1.5">
+        <Lock size={11} className="text-muted-foreground mt-0.5 shrink-0" />
+        <p className="text-[10px] text-muted-foreground leading-snug">
+          La central la gestiona el administrador en{" "}
+          <span className="text-foreground">Configuración → Telefonía</span>. Tu extensión se
+          asigna en <span className="text-foreground">Configuración → Usuarios</span>.
+        </p>
+      </div>
+
       <div className="space-y-2.5">
         <div>
           <Label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
@@ -40,9 +51,9 @@ export function SoftphoneConfig({ onClose, onSave }: Props) {
           </Label>
           <Input
             value={config.server}
-            onChange={(e) => setConfig({ server: e.target.value })}
-            placeholder="wss://pbx.example.com:8089/ws"
-            className="h-7 text-xs font-mono"
+            readOnly
+            placeholder="Sin configurar"
+            className="h-7 text-xs font-mono bg-muted/50 cursor-default"
           />
           {certUrl && (
             <p className="text-[10px] text-muted-foreground mt-1">
@@ -65,27 +76,40 @@ export function SoftphoneConfig({ onClose, onSave }: Props) {
           </Label>
           <Input
             value={config.realm}
-            onChange={(e) => setConfig({ realm: e.target.value })}
-            placeholder="pbx.example.com"
-            className="h-7 text-xs font-mono"
+            readOnly
+            placeholder="Sin configurar"
+            className="h-7 text-xs font-mono bg-muted/50 cursor-default"
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
+            <User size={10} /> Extensión
+          </Label>
+          <Input
+            value={config.extension}
+            readOnly
+            placeholder="Sin asignar"
+            className="h-7 text-xs font-mono bg-muted/50 cursor-default"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ChevronDown
+            size={11}
+            className={`transition-transform ${showAdvanced ? "rotate-180" : ""}`}
+          />
+          Avanzado
+        </button>
+
+        {showAdvanced && (
           <div>
             <Label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
-              <User size={10} /> Extensión
-            </Label>
-            <Input
-              value={config.extension}
-              onChange={(e) => setConfig({ extension: e.target.value })}
-              placeholder="1001"
-              className="h-7 text-xs font-mono"
-            />
-          </div>
-          <div>
-            <Label className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
-              <Key size={10} /> Contraseña
+              <Key size={10} /> Contraseña SIP
             </Label>
             <Input
               type="password"
@@ -94,40 +118,16 @@ export function SoftphoneConfig({ onClose, onSave }: Props) {
               placeholder="••••••"
               className="h-7 text-xs font-mono"
             />
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Normalmente la asigna el administrador. Solo cámbiala si tu central lo requiere.
+            </p>
           </div>
-        </div>
-
-        <div>
-          <Label className="text-xs text-muted-foreground mb-1">Nombre para mostrar</Label>
-          <Input
-            value={config.displayName}
-            onChange={(e) => setConfig({ displayName: e.target.value })}
-            placeholder="Agente Ana García"
-            className="h-7 text-xs"
-          />
-        </div>
-
-        <div>
-          <Label className="text-xs text-muted-foreground mb-1">STUN Servers (separados por coma)</Label>
-          <Input
-            value={config.stunServers.join(", ")}
-            onChange={(e) =>
-              setConfig({
-                stunServers: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
-              })
-            }
-            placeholder="stun:stun.l.google.com:19302"
-            className="h-7 text-xs font-mono"
-          />
-        </div>
+        )}
       </div>
 
-      <Button
-        className="w-full h-8 text-xs"
-        onClick={onSave}
-        disabled={!configCheck.canRegister}
-      >
-        Guardar y Conectar
+      <Button className="w-full h-8 text-xs gap-1.5" onClick={onSave} disabled={!configCheck.canRegister}>
+        <Wifi size={12} />
+        Conectar
       </Button>
 
       <p className="text-[10px] text-muted-foreground text-center">
