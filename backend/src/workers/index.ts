@@ -3,6 +3,7 @@ import {
   createDialerPredictiveWorker,
   createDialerProgressiveWorker,
   createOutboundWorker,
+  createRecordingUploadWorker,
   createRoutingWorker,
   createSlaWorker,
 } from "../queue/bull.js";
@@ -16,6 +17,7 @@ import { startVoiceAsteriskListeners } from "../services/voiceAsterisk.service.j
 import { runProgressiveDialerTick } from "../services/dialer/progressiveDialer.service.js";
 import { runPredictiveDialerTick } from "../services/dialer/predictiveDialer.service.js";
 import { runSlaCheck } from "../services/slaCheck.service.js";
+import { processRecordingUpload } from "../services/voice/recording.service.js";
 
 async function withJobTenant<T>(
   tenantKey: string | undefined,
@@ -74,12 +76,26 @@ export function startWorkers(io: Server | null): void {
     });
   });
 
+  createRecordingUploadWorker(async (job) => {
+    const tenantKey = job.data.tenantKey as string | undefined;
+    const recordingName = job.data.recordingName as string | undefined;
+    if (!tenantKey || !recordingName) return;
+    await withJobTenant(tenantKey, async () => {
+      await processRecordingUpload({
+        tenantKey,
+        recordingName,
+        conversationId: job.data.conversationId as string | undefined,
+        channelConfigId: job.data.channelConfigId as string | undefined,
+      });
+    });
+  });
+
   startEmailInboundPoller(io);
   void startVoiceAsteriskListeners(io).catch((err) => {
     console.error("[voice] Failed to start voice listeners:", err);
   });
 
   console.log(
-    "BullMQ workers listening (routing, sla-check, outbound-messages, dialer-progressive, dialer-predictive, email-poller, voice-ari)"
+    "BullMQ workers listening (routing, sla-check, outbound-messages, dialer-progressive, dialer-predictive, recording-upload, email-poller, voice-ari)"
   );
 }

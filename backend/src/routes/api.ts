@@ -43,6 +43,7 @@ import { getWhatsAppConfigValidationError } from "../channels/whatsapp/config.js
 import { getEmailConfigValidationError } from "../channels/email/config.js";
 import { getVoiceConfigValidationError } from "../channels/voice/config.js";
 import * as telephonySettingsService from "../services/telephonySettings.service.js";
+import { getLocalStorage } from "../services/storage.service.js";
 import type { Server } from "socket.io";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -509,6 +510,49 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       await hangupConversationCall(getIo(app), routeParam(req, "conversationId"));
       res.json({ ok: true });
+    })
+  );
+
+  r.get(
+    "/voice/recordings/:voiceCallId",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const voiceCall = await getPrisma().voiceCall.findUnique({
+        where: { id: routeParam(req, "voiceCallId") },
+      });
+      if (!voiceCall) throw new HttpError(404, "Voice call not found");
+
+      const meta = (voiceCall.metadata as Record<string, unknown>) ?? {};
+      const recordingUrl = meta.recording_url as string | undefined;
+      if (!recordingUrl) throw new HttpError(404, "No recording available for this call");
+
+      res.json({ url: recordingUrl });
+    })
+  );
+
+  r.get(
+    "/files/:key",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const key = decodeURIComponent(routeParam(req, "key"));
+      const local = getLocalStorage();
+      if (!local) throw new HttpError(501, "File serving requires local storage provider");
+
+      const filePath = local.resolvePath(key);
+      const fs = await import("node:fs/promises");
+      try {
+        await fs.access(filePath);
+      } catch {
+        throw new HttpError(404, "File not found");
+      }
+
+      const ext = key.split(".").pop()?.toLowerCase();
+      const mimeMap: Record<string, string> = { wav: "audio/wav", mp3: "audio/mpeg", ogg: "audio/ogg" };
+      res.setHeader("Content-Type", mimeMap[ext ?? ""] ?? "application/octet-stream");
+      res.setHeader("Content-Disposition", `inline; filename="${key.split("/").pop()}"`);
+
+      const { createReadStream } = await import("node:fs");
+      createReadStream(filePath).pipe(res);
     })
   );
 

@@ -204,7 +204,7 @@ export function VoiceChannelFields({
       <div className="flex items-center justify-between rounded-md border px-3 py-2 md:col-span-2">
         <div>
           <Label className="text-xs">Grabación de llamadas</Label>
-          <p className="text-[11px] text-muted-foreground">Activa grabación cuando el canal lo soporte en Asterisk.</p>
+          <p className="text-[11px] text-muted-foreground">Graba automáticamente todas las llamadas del bridge ARI. Las grabaciones se almacenan y se vinculan a la conversación.</p>
         </div>
         <Switch
           checked={form.recordingEnabled}

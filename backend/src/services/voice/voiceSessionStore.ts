@@ -17,6 +17,7 @@ export type VoiceSessionState = {
   dialedNumber?: string;
   campaignId?: string;
   dialerContactId?: string;
+  recordingName?: string;
   updatedAt: string;
 };
 

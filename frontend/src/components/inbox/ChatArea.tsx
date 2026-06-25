@@ -452,12 +452,25 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
               }
               if (msg.content_type === "VOICE_CALL" || msg.content.startsWith("[Llamada")) {
                 const meta = msg.metadata as { caller_number?: string; state?: string; duration_seconds?: number } | undefined;
+                const recordingUrl = msg.call_recording_url;
+                const durationSec = msg.call_duration_seconds ?? meta?.duration_seconds;
+                const fmtDuration = durationSec != null
+                  ? `${Math.floor(durationSec / 60)}:${String(durationSec % 60).padStart(2, "0")}`
+                  : undefined;
                 return (
                   <div key={msg.id} className="flex justify-center">
-                    <div className="text-[11px] text-muted-foreground bg-surface-system-event px-3 py-2 rounded-lg text-center">
+                    <div className="text-[11px] text-muted-foreground bg-surface-system-event px-3 py-2 rounded-lg text-center max-w-xs">
                       <div>{msg.content}</div>
                       {meta?.caller_number && <div className="mt-1">Desde: {meta.caller_number}</div>}
-                      {meta?.state && <div className="capitalize">Estado: {meta.state}</div>}
+                      {fmtDuration && <div className="mt-0.5">Duración: {fmtDuration}</div>}
+                      {recordingUrl && (
+                        <audio
+                          controls
+                          preload="none"
+                          src={recordingUrl}
+                          className="mt-2 w-full max-w-[260px] h-8"
+                        />
+                      )}
                     </div>
                   </div>
                 );

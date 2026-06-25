@@ -35,6 +35,19 @@ export class AriClient {
     return (await response.json()) as T;
   }
 
+  private async requestRaw(method: string, path: string): Promise<Buffer> {
+    const url = `${this.httpBase()}/ari${path.startsWith("/") ? path : `/${path}`}`;
+    const response = await fetch(url, {
+      method,
+      headers: { Authorization: this.authHeader() },
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`ARI ${method} ${path} failed: HTTP ${response.status} ${text}`);
+    }
+    return Buffer.from(await response.arrayBuffer());
+  }
+
   async answerChannel(channelId: string): Promise<void> {
     await this.request("POST", `/channels/${encodeURIComponent(channelId)}/answer`);
   }
@@ -96,6 +109,24 @@ export class AriClient {
       maxDurationSeconds: 7200,
       ifExists: "overwrite",
     });
+  }
+
+  async recordBridge(bridgeId: string, name: string): Promise<void> {
+    await this.request("POST", `/bridges/${encodeURIComponent(bridgeId)}/record`, {
+      name,
+      format: "wav",
+      maxDurationSeconds: 7200,
+      ifExists: "overwrite",
+      terminateOn: "none",
+    });
+  }
+
+  async getRecordingFile(name: string): Promise<Buffer> {
+    return this.requestRaw("GET", `/recordings/stored/${encodeURIComponent(name)}/file`);
+  }
+
+  async deleteRecording(name: string): Promise<void> {
+    await this.request("DELETE", `/recordings/stored/${encodeURIComponent(name)}`);
   }
 }
 

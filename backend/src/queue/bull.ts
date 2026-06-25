@@ -9,6 +9,7 @@ export const slaCheckQueue = new Queue("sla-check", { connection });
 export const outboundMessagesQueue = new Queue("outbound-messages", { connection });
 export const dialerProgressiveQueue = new Queue("dialer-progressive", { connection });
 export const dialerPredictiveQueue = new Queue("dialer-predictive", { connection });
+export const recordingUploadQueue = new Queue("recording-upload", { connection });
 
 function withTenantKey<T extends Record<string, unknown>>(data: T): T & { tenantKey: string } {
   return { ...data, tenantKey: getCurrentTenantKey() };
@@ -64,6 +65,18 @@ export async function enqueueDialerPredictive(
   });
 }
 
+export async function enqueueRecordingUpload(
+  data: { recordingName: string; conversationId?: string; channelConfigId?: string },
+  opts?: JobsOptions
+): Promise<void> {
+  await recordingUploadQueue.add("upload", withTenantKey(data), {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 5000 },
+    delay: 2000,
+    ...opts,
+  });
+}
+
 export { connection };
 
 export type WorkerProcessor = (job: { data: Record<string, unknown> }) => Promise<void>;
@@ -111,6 +124,16 @@ export function createDialerProgressiveWorker(process: WorkerProcessor): Worker 
 export function createDialerPredictiveWorker(process: WorkerProcessor): Worker {
   return new Worker(
     "dialer-predictive",
+    async (job) => {
+      await process(job as { data: Record<string, unknown> });
+    },
+    { connection, concurrency: 2 }
+  );
+}
+
+export function createRecordingUploadWorker(process: WorkerProcessor): Worker {
+  return new Worker(
+    "recording-upload",
     async (job) => {
       await process(job as { data: Record<string, unknown> });
     },

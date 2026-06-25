@@ -15,6 +15,7 @@ import {
   updateVoiceSession,
   type VoiceSessionState,
 } from "./voiceSessionStore.js";
+import { enqueueRecordingUpload } from "../../queue/bull.js";
 
 type AriaAny = Record<string, unknown>;
 
@@ -182,11 +183,20 @@ export async function bridgeChannels(
   await ari.addChannelToBridge(bridge.id, callerChannelId);
   await ari.addChannelToBridge(bridge.id, agentChannelId);
 
+  let recordingName: string | undefined;
+  if (cfg.recordingEnabled) {
+    recordingName = `call-${conversationId}-${Date.now()}`;
+    await ari.recordBridge(bridge.id, recordingName).catch((err) =>
+      console.error("[voice] Failed to start bridge recording:", err)
+    );
+  }
+
   await updateVoiceSession(callerChannelId, {
     bridgeId: bridge.id,
     state: "active",
     agentChannelId,
     conversationId,
+    recordingName,
   });
 
   await getPrisma().conversation.update({
@@ -479,6 +489,14 @@ export async function handleStasisEnd(
       where: { id: session.conversationId },
       data: { status: "WRAP_UP" },
     });
+  }
+
+  if (session.recordingName) {
+    await enqueueRecordingUpload({
+      recordingName: session.recordingName,
+      conversationId: session.conversationId,
+      channelConfigId: session.channelConfigId,
+    }).catch((err) => console.error("[voice] Failed to enqueue recording upload:", err));
   }
 
   emitTenantLiveEvent(io, getCurrentTenantKey(), "voice:ended", {
