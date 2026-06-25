@@ -2,9 +2,10 @@ import { Router, type Express } from "express";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
 import rateLimit from "express-rate-limit";
+import { Prisma } from "@prisma/client";
 import { getPrisma } from "../lib/prisma.js";
 import { mapChannelType } from "../lib/channelTypes.js";
-import { authMiddleware, optionalAuthMiddleware, requireAuth } from "../middleware/auth.js";
+import { optionalAuthMiddleware, requireAuth } from "../middleware/auth.js";
 import { integrationApiKeyMiddleware } from "../middleware/integrationAuth.js";
 import { requireAnyPermission, requirePermission } from "../middleware/requirePermission.js";
 import { HttpError } from "../middleware/errorHandler.js";
@@ -18,7 +19,7 @@ import * as reportService from "../services/report.service.js";
 import * as qualityService from "../services/quality.service.js";
 import * as integrationService from "../services/integration.service.js";
 import * as inboundService from "../services/inbound.service.js";
-import { ingestVoiceCallEvent, upsertVoiceCallRecord, normalizePhoneNumber } from "../services/voiceInbound.service.js";
+import { ingestVoiceCallEvent, upsertVoiceCallRecord, normalizePhoneE164 } from "../services/voiceInbound.service.js";
 import { buildDialerRouter } from "./dialer.js";
 import { tenantMiddleware } from "../middleware/tenant.js";
 import { buildTenantsRouter } from "./tenants.js";
@@ -112,6 +113,34 @@ const limiter = rateLimit({ windowMs: 60_000, max: 300 });
 export function buildApiRouter(app: Express): Router {
   const r = Router();
   r.use(limiter);
+
+  r.get(
+    "/files/*",
+    asyncHandler(async (req, res) => {
+      const key = req.params[0];
+      if (!key) throw new HttpError(400, "File key required");
+
+      const local = getLocalStorage();
+      if (!local) throw new HttpError(501, "File serving requires local storage provider");
+
+      const filePath = local.resolvePath(key);
+      const fsP = await import("node:fs/promises");
+      try {
+        await fsP.access(filePath);
+      } catch {
+        throw new HttpError(404, "File not found");
+      }
+
+      const ext = key.split(".").pop()?.toLowerCase();
+      const mimeMap: Record<string, string> = { wav: "audio/wav", mp3: "audio/mpeg", ogg: "audio/ogg" };
+      res.setHeader("Content-Type", mimeMap[ext ?? ""] ?? "application/octet-stream");
+      res.setHeader("Content-Disposition", `inline; filename="${key.split("/").pop()}"`);
+
+      const { createReadStream } = await import("node:fs");
+      createReadStream(filePath).pipe(res);
+    })
+  );
+
   r.use(tenantMiddleware);
   r.use("/tenants", buildTenantsRouter());
 
@@ -466,7 +495,7 @@ export function buildApiRouter(app: Express): Router {
         contact_id?: string;
         channel_id?: string;
       };
-      const phone = normalizePhoneNumber(body.phone);
+      const phone = await normalizePhoneE164(body.phone);
       if (!phone) throw new HttpError(400, "phone required");
 
       const channel = body.channel_id
@@ -527,32 +556,6 @@ export function buildApiRouter(app: Express): Router {
       if (!recordingUrl) throw new HttpError(404, "No recording available for this call");
 
       res.json({ url: recordingUrl });
-    })
-  );
-
-  r.get(
-    "/files/:key",
-    requireAuth,
-    asyncHandler(async (req, res) => {
-      const key = decodeURIComponent(routeParam(req, "key"));
-      const local = getLocalStorage();
-      if (!local) throw new HttpError(501, "File serving requires local storage provider");
-
-      const filePath = local.resolvePath(key);
-      const fs = await import("node:fs/promises");
-      try {
-        await fs.access(filePath);
-      } catch {
-        throw new HttpError(404, "File not found");
-      }
-
-      const ext = key.split(".").pop()?.toLowerCase();
-      const mimeMap: Record<string, string> = { wav: "audio/wav", mp3: "audio/mpeg", ogg: "audio/ogg" };
-      res.setHeader("Content-Type", mimeMap[ext ?? ""] ?? "application/octet-stream");
-      res.setHeader("Content-Disposition", `inline; filename="${key.split("/").pop()}"`);
-
-      const { createReadStream } = await import("node:fs");
-      createReadStream(filePath).pipe(res);
     })
   );
 
@@ -695,6 +698,83 @@ export function buildApiRouter(app: Express): Router {
         evaluatorId: req.authUser!.id,
       });
       res.status(201).json(row);
+    })
+  );
+
+  r.get(
+    "/voice/recordings",
+    requireAuth,
+    requirePermission("quality"),
+    asyncHandler(async (req, res) => {
+      const page = Math.max(1, Number(req.query.page ?? 1));
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 25)));
+      const skip = (page - 1) * limit;
+
+      const direction = req.query.direction as string | undefined;
+      const agentId = req.query.agentId as string | undefined;
+      const dateFrom = req.query.dateFrom as string | undefined;
+      const dateTo = req.query.dateTo as string | undefined;
+      const search = req.query.search as string | undefined;
+
+      const where: Record<string, unknown> = {
+        NOT: { metadata: { equals: Prisma.DbNull } },
+        metadata: { path: ["recording_url"], not: Prisma.JsonNull },
+      };
+      if (direction === "inbound" || direction === "outbound") where.direction = direction;
+      if (agentId) where.user_id = agentId;
+      if (dateFrom || dateTo) {
+        const range: Record<string, Date> = {};
+        if (dateFrom) range.gte = new Date(dateFrom);
+        if (dateTo) range.lte = new Date(dateTo + "T23:59:59.999Z");
+        where.started_at = range;
+      }
+      if (search?.trim()) {
+        where.OR = [
+          { remote_uri: { contains: search.trim() } },
+          { remote_display_name: { contains: search.trim(), mode: "insensitive" } },
+        ];
+      }
+
+      const [items, total] = await Promise.all([
+        getPrisma().voiceCall.findMany({
+          where,
+          orderBy: { created_at: "desc" },
+          skip,
+          take: limit,
+          include: {
+            user: { select: { id: true, first_name: true, last_name: true } },
+            contact: { select: { id: true, name: true, phone: true } },
+          },
+        }),
+        getPrisma().voiceCall.count({ where }),
+      ]);
+
+      res.json({
+        items: items.map((vc) => {
+          const meta = (vc.metadata as Record<string, unknown>) ?? {};
+          return {
+            id: vc.id,
+            conversation_id: vc.conversation_id,
+            remote_uri: vc.remote_uri,
+            remote_display_name: vc.remote_display_name,
+            direction: vc.direction,
+            state: vc.state,
+            started_at: vc.started_at?.toISOString() ?? null,
+            ended_at: vc.ended_at?.toISOString() ?? null,
+            duration_seconds: vc.duration_seconds,
+            recording_url: meta.recording_url as string | undefined,
+            agent: vc.user
+              ? { id: vc.user.id, name: `${vc.user.first_name} ${vc.user.last_name}`.trim() }
+              : null,
+            contact: vc.contact
+              ? { id: vc.contact.id, name: vc.contact.name, phone: vc.contact.phone }
+              : null,
+          };
+        }),
+        page,
+        limit,
+        total,
+      });
     })
   );
 

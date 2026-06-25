@@ -966,7 +966,7 @@ export default function DialerCampaignsPage() {
   const canAdmin = hasSettingsAccess(user);
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className="p-6 overflow-y-auto h-full scrollbar-thin space-y-6">
       <div>
         <h1 className="text-xl font-semibold">Campañas de marcación</h1>
         <p className="text-sm text-muted-foreground">

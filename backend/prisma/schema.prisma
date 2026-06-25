@@ -577,6 +577,7 @@ model OrganizationSettings {
   sip_ice_gathering_timeout Int @default(5000)
   sip_extension_range_start Int @default(7001)
   sip_extension_range_end   Int @default(7099)
+  default_country_code      String @default("EC")
   updated_at    DateTime @updatedAt
 
   @@map("organization_settings")

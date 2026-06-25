@@ -19,11 +19,11 @@ class LocalStorageProvider implements StorageProvider {
     const filePath = path.join(this.baseDir, key);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, data);
-    return `/api/files/${encodeURIComponent(key)}`;
+    return `/api/files/${key}`;
   }
 
   async getSignedUrl(key: string): Promise<string> {
-    return `/api/files/${encodeURIComponent(key)}`;
+    return `/api/files/${key}`;
   }
 
   async delete(key: string): Promise<void> {

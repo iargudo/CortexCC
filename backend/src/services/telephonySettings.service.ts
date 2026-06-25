@@ -17,6 +17,7 @@ export type TelephonySettingsView = {
   pbxHost: string;
   pbxWssPort: number;
   pbxAriPort: number;
+  defaultCountryCode: string;
   derived: {
     sipServer: string;
     sipRealm: string;
@@ -43,6 +44,7 @@ export type SaveTelephonyInput = {
   pbxHost: string;
   pbxWssPort?: number;
   pbxAriPort?: number;
+  defaultCountryCode?: string;
   softphone?: {
     displayName?: string;
     stunServers?: string[];
@@ -106,6 +108,7 @@ function buildView(org: OrganizationSettings | null, voiceChannel: Channel | nul
     pbxHost,
     pbxWssPort,
     pbxAriPort,
+    defaultCountryCode: org?.default_country_code ?? "EC",
     derived: {
       sipServer: derived.sipServer,
       sipRealm: derived.sipRealm,
@@ -162,6 +165,8 @@ export async function saveTelephonySettings(input: SaveTelephonyInput): Promise<
       ? Math.max(1000, Math.min(30000, Math.round(soft.iceGatheringTimeout)))
       : 5000;
 
+  const countryCode = input.defaultCountryCode?.trim().toUpperCase() || undefined;
+
   await getPrisma().organizationSettings.upsert({
     where: { id: "default" },
     create: {
@@ -177,6 +182,7 @@ export async function saveTelephonySettings(input: SaveTelephonyInput): Promise<
       sip_ice_gathering_timeout: iceGatheringTimeout,
       sip_extension_range_start: rangeStart,
       sip_extension_range_end: rangeEnd,
+      ...(countryCode ? { default_country_code: countryCode } : {}),
     },
     update: {
       pbx_host: derived.host,
@@ -190,6 +196,7 @@ export async function saveTelephonySettings(input: SaveTelephonyInput): Promise<
       sip_ice_gathering_timeout: iceGatheringTimeout,
       sip_extension_range_start: rangeStart,
       sip_extension_range_end: rangeEnd,
+      ...(countryCode ? { default_country_code: countryCode } : {}),
     },
   });
 

@@ -7,7 +7,7 @@ import { getCurrentTenantKey } from "../../lib/tenantContext.js";
 import { HttpError } from "../../middleware/errorHandler.js";
 import { buildAgentEndpoint, parseVoiceChannelConfig, type VoiceChannelConfig } from "../../channels/voice/config.js";
 import { createAriClient } from "./ariClient.js";
-import { ingestVoiceCallEvent, normalizePhoneNumber } from "./voiceCall.service.js";
+import { ingestVoiceCallEvent, normalizePhoneE164 } from "./voiceCall.service.js";
 import {
   deleteVoiceSession,
   getVoiceSession,
@@ -241,7 +241,7 @@ export async function originateOutboundCall(params: {
   });
   if (!agent?.sip_extension) throw new Error("Agent has no SIP extension configured");
 
-  const normalizedPhone = normalizePhoneNumber(params.phone);
+  const normalizedPhone = await normalizePhoneE164(params.phone);
   if (!normalizedPhone) throw new Error("Invalid phone number");
 
   let conversationId = params.conversationId;

@@ -459,7 +459,7 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
                   : undefined;
                 return (
                   <div key={msg.id} className="flex justify-center">
-                    <div className="text-[11px] text-muted-foreground bg-surface-system-event px-3 py-2 rounded-lg text-center max-w-xs">
+                    <div className="text-[11px] text-muted-foreground bg-surface-system-event px-3 py-2 rounded-lg text-center">
                       <div>{msg.content}</div>
                       {meta?.caller_number && <div className="mt-1">Desde: {meta.caller_number}</div>}
                       {fmtDuration && <div className="mt-0.5">Duración: {fmtDuration}</div>}
@@ -468,7 +468,7 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
                           controls
                           preload="none"
                           src={recordingUrl}
-                          className="mt-2 w-full max-w-[260px] h-8"
+                          className="mt-2 w-full min-w-[420px] h-10"
                         />
                       )}
                     </div>

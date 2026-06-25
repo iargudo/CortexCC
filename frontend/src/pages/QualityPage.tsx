@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import type { ChannelType } from "@/data/mock";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChannelIcon } from "@/components/ChannelIcon";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { Star, ThumbsUp, MessageSquare, CheckCircle } from "lucide-react";
+import { Star, ThumbsUp, MessageSquare, CheckCircle, Phone, PhoneIncoming, PhoneOutgoing, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiJson } from "@/lib/api";
 
 type PendingRow = {
@@ -21,6 +23,7 @@ type PendingRow = {
   channel: { type: ChannelType };
   queue: { name: string } | null;
   assignments: { user: { first_name: string; last_name: string } | null }[];
+  voice_calls?: { id: string; metadata: Record<string, unknown> | null }[];
 };
 
 type EvalRow = {
@@ -40,12 +43,34 @@ type EvalRow = {
 
 type AgentRow = { id: string; name: string; csat_avg?: number };
 
+type RecordingRow = {
+  id: string;
+  conversation_id: string | null;
+  remote_uri: string;
+  remote_display_name: string | null;
+  direction: string;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_seconds: number | null;
+  recording_url: string | undefined;
+  agent: { id: string; name: string } | null;
+  contact: { id: string; name: string | null; phone: string | null } | null;
+};
+
+type RecordingsResponse = {
+  items: RecordingRow[];
+  page: number;
+  limit: number;
+  total: number;
+};
+
 type EvalTarget = {
   id: string;
   channel: ChannelType;
   contact: { name: string };
   assigned_agent?: string;
   queue_name: string;
+  recording_url?: string;
 };
 
 const categories = [
@@ -58,13 +83,23 @@ const categories = [
 function mapPending(p: PendingRow): EvalTarget {
   const u = p.assignments[0]?.user;
   const assigned = u ? `${u.first_name} ${u.last_name}`.trim() : undefined;
+  const vc = p.voice_calls?.[0];
+  const recUrl = (vc?.metadata as Record<string, unknown> | null)?.recording_url as string | undefined;
   return {
     id: p.id,
     channel: p.channel.type,
     contact: { name: p.contact.name ?? "Contacto" },
     assigned_agent: assigned,
     queue_name: p.queue?.name ?? "—",
+    recording_url: recUrl,
   };
+}
+
+function fmtDuration(sec: number | null | undefined): string {
+  if (sec == null) return "—";
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 export default function QualityPage() {
@@ -73,6 +108,14 @@ export default function QualityPage() {
   const [evalTarget, setEvalTarget] = useState<EvalTarget | null>(null);
   const [scores, setScores] = useState({ saludo: 7, empatia: 7, resolucion: 7, cierre: 7 });
   const [evalComment, setEvalComment] = useState("");
+
+  const [recPage, setRecPage] = useState(1);
+  const [recSearch, setRecSearch] = useState("");
+  const [recDirection, setRecDirection] = useState<string>("all");
+  const [recAgentId, setRecAgentId] = useState<string>("all");
+  const [recDateFrom, setRecDateFrom] = useState("");
+  const [recDateTo, setRecDateTo] = useState("");
+  const [playingId, setPlayingId] = useState<string | null>(null);
 
   const pendingQuery = useQuery({
     queryKey: ["quality", "pending"],
@@ -86,6 +129,21 @@ export default function QualityPage() {
     queryKey: ["agents", "quality"],
     queryFn: () => apiJson<AgentRow[]>("/agents"),
   });
+
+  const recQueryParams = new URLSearchParams({ page: String(recPage), limit: "25" });
+  if (recDirection !== "all") recQueryParams.set("direction", recDirection);
+  if (recAgentId !== "all") recQueryParams.set("agentId", recAgentId);
+  if (recDateFrom) recQueryParams.set("dateFrom", recDateFrom);
+  if (recDateTo) recQueryParams.set("dateTo", recDateTo);
+  if (recSearch.trim()) recQueryParams.set("search", recSearch.trim());
+
+  const recordingsQuery = useQuery({
+    queryKey: ["quality", "recordings", recPage, recDirection, recAgentId, recDateFrom, recDateTo, recSearch],
+    queryFn: () => apiJson<RecordingsResponse>(`/voice/recordings?${recQueryParams.toString()}`),
+  });
+  const recordings = recordingsQuery.data?.items ?? [];
+  const recTotal = recordingsQuery.data?.total ?? 0;
+  const recTotalPages = Math.max(1, Math.ceil(recTotal / 25));
 
   const pending = (pendingQuery.data ?? []).map(mapPending);
   const evaluations = evalsQuery.data ?? [];
@@ -148,7 +206,7 @@ export default function QualityPage() {
       <h1 className="text-xl font-bold">Calidad (QA)</h1>
       {err && <p className="text-sm text-destructive">{(err as Error).message}</p>}
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <Card>
           <CardContent className="p-4 flex items-center gap-3">
             <Star size={20} className="text-status-away" />
@@ -185,6 +243,15 @@ export default function QualityPage() {
             </div>
           </CardContent>
         </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <Phone size={20} className="text-primary" />
+            <div>
+              <p className="text-xs text-muted-foreground">Grabaciones</p>
+              <p className="text-2xl font-bold">{recTotal}</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <Tabs defaultValue="evaluations">
@@ -192,6 +259,10 @@ export default function QualityPage() {
           <TabsTrigger value="evaluations">Evaluaciones</TabsTrigger>
           <TabsTrigger value="pending">Pendientes</TabsTrigger>
           <TabsTrigger value="agents">Por agente</TabsTrigger>
+          <TabsTrigger value="recordings" className="flex items-center gap-1.5">
+            <Phone size={13} />
+            Grabaciones
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="evaluations" className="mt-4">
@@ -302,6 +373,162 @@ export default function QualityPage() {
             ))}
           </div>
         </TabsContent>
+
+        <TabsContent value="recordings" className="mt-4 space-y-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search size={14} className="absolute left-2.5 top-2.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar por número o nombre…"
+                    value={recSearch}
+                    onChange={(e) => { setRecSearch(e.target.value); setRecPage(1); }}
+                    className="pl-8 h-9 text-sm"
+                  />
+                </div>
+                <Select value={recDirection} onValueChange={(v) => { setRecDirection(v); setRecPage(1); }}>
+                  <SelectTrigger className="w-[140px] h-9 text-sm">
+                    <SelectValue placeholder="Dirección" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas</SelectItem>
+                    <SelectItem value="inbound">Entrantes</SelectItem>
+                    <SelectItem value="outbound">Salientes</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={recAgentId} onValueChange={(v) => { setRecAgentId(v); setRecPage(1); }}>
+                  <SelectTrigger className="w-[180px] h-9 text-sm">
+                    <SelectValue placeholder="Agente" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los agentes</SelectItem>
+                    {agents.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    value={recDateFrom}
+                    onChange={(e) => { setRecDateFrom(e.target.value); setRecPage(1); }}
+                    className="h-9 text-sm w-[140px]"
+                  />
+                  <span className="text-xs text-muted-foreground">a</span>
+                  <Input
+                    type="date"
+                    value={recDateTo}
+                    onChange={(e) => { setRecDateTo(e.target.value); setRecPage(1); }}
+                    className="h-9 text-sm w-[140px]"
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-0">
+              {recordingsQuery.isLoading && <p className="p-4 text-sm text-muted-foreground">Cargando grabaciones…</p>}
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-muted-foreground border-b">
+                    <th className="text-left p-3 font-medium">Dirección</th>
+                    <th className="text-left p-3 font-medium">Contacto / Número</th>
+                    <th className="text-left p-3 font-medium">Agente</th>
+                    <th className="text-center p-3 font-medium">Duración</th>
+                    <th className="text-left p-3 font-medium">Fecha</th>
+                    <th className="text-left p-3 font-medium">Grabación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recordings.map((r) => (
+                    <tr key={r.id} className="border-b last:border-0 hover:bg-muted/50">
+                      <td className="p-3">
+                        <div className="flex items-center gap-1.5 text-xs">
+                          {r.direction === "inbound" ? (
+                            <><PhoneIncoming size={13} className="text-status-online" /> Entrante</>
+                          ) : (
+                            <><PhoneOutgoing size={13} className="text-primary" /> Saliente</>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-3">
+                        <p className="font-medium text-sm">{r.contact?.name ?? r.remote_display_name ?? "Desconocido"}</p>
+                        <p className="text-xs text-muted-foreground">{r.contact?.phone ?? r.remote_uri ?? ""}</p>
+                      </td>
+                      <td className="p-3 text-sm">{r.agent?.name ?? "—"}</td>
+                      <td className="text-center p-3 font-mono text-sm">{fmtDuration(r.duration_seconds)}</td>
+                      <td className="p-3 text-sm text-muted-foreground">
+                        {r.started_at ? new Date(r.started_at).toLocaleString("es", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                      </td>
+                      <td className="p-3">
+                        {r.recording_url ? (
+                          playingId === r.id ? (
+                            <audio
+                              controls
+                              autoPlay
+                              preload="auto"
+                              src={r.recording_url}
+                              className="h-8 w-[280px]"
+                              onEnded={() => setPlayingId(null)}
+                            />
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setPlayingId(r.id)}
+                            >
+                              Reproducir
+                            </Button>
+                          )
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Sin grabación</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {!recordingsQuery.isLoading && recordings.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="p-6 text-center text-sm text-muted-foreground">
+                        No se encontraron grabaciones con los filtros aplicados.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+
+          {recTotalPages > 1 && (
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                {recTotal} grabación{recTotal !== 1 ? "es" : ""} — Página {recPage} de {recTotalPages}
+              </p>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  disabled={recPage <= 1}
+                  onClick={() => setRecPage((p) => p - 1)}
+                >
+                  <ChevronLeft size={14} />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  disabled={recPage >= recTotalPages}
+                  onClick={() => setRecPage((p) => p + 1)}
+                >
+                  <ChevronRight size={14} />
+                </Button>
+              </div>
+            </div>
+          )}
+        </TabsContent>
       </Tabs>
 
       <Dialog open={evalOpen} onOpenChange={setEvalOpen}>
@@ -323,6 +550,20 @@ export default function QualityPage() {
                   {totalScore}%
                 </Badge>
               </div>
+
+              {evalTarget.recording_url && (
+                <div className="space-y-1">
+                  <Label className="text-sm flex items-center gap-1.5">
+                    <Phone size={13} /> Grabación de la llamada
+                  </Label>
+                  <audio
+                    controls
+                    preload="none"
+                    src={evalTarget.recording_url}
+                    className="w-full h-10"
+                  />
+                </div>
+              )}
 
               {categories.map((cat) => (
                 <div key={cat.key} className="space-y-1">

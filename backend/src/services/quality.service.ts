@@ -14,6 +14,7 @@ export async function listPending() {
       contact: true,
       channel: true,
       assignments: { where: { ended_at: { not: null } }, take: 1, include: { user: true } },
+      voice_calls: { orderBy: { created_at: "desc" }, take: 1 },
     },
   });
 }

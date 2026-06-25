@@ -26,7 +26,7 @@ vi.mock("./ariClient.js", () => ({
 }));
 
 const mockStorage = {
-  upload: vi.fn().mockResolvedValue("/api/files/recordings%2Ftest-tenant%2Fcall-conv-123-1000.wav"),
+  upload: vi.fn().mockResolvedValue("/api/files/recordings/test-tenant/call-conv-123-1000.wav"),
   getSignedUrl: vi.fn().mockResolvedValue("/api/files/test"),
   delete: vi.fn().mockResolvedValue(undefined),
 };
@@ -313,7 +313,7 @@ describe("Call Recording Integration", () => {
         where: { id: "vc-001" },
         data: {
           metadata: expect.objectContaining({
-            recording_url: "/api/files/recordings%2Ftest-tenant%2Fcall-conv-123-1000.wav",
+            recording_url: "/api/files/recordings/test-tenant/call-conv-123-1000.wav",
             recording_name: "call-conv-123-1000",
           }),
         },
@@ -323,7 +323,7 @@ describe("Call Recording Integration", () => {
       expect(mockPrisma.message.update).toHaveBeenCalledWith({
         where: { id: "msg-ended" },
         data: {
-          call_recording_url: "/api/files/recordings%2Ftest-tenant%2Fcall-conv-123-1000.wav",
+          call_recording_url: "/api/files/recordings/test-tenant/call-conv-123-1000.wav",
           call_duration_seconds: 300, // 5 minutes
         },
       });

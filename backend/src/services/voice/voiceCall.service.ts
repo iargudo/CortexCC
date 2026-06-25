@@ -1,4 +1,5 @@
 import type { ConversationStatus, Prisma, PrismaClient } from "@prisma/client";
+import { parsePhoneNumberWithError, type CountryCode } from "libphonenumber-js";
 import { getPrisma } from "../../lib/prisma.js";
 import { conversationRoom, emitTenantLiveEvent, userRoom } from "../../lib/socketRooms.js";
 import { getCurrentTenantKey } from "../../lib/tenantContext.js";
@@ -31,6 +32,28 @@ export type VoiceCallEventInput = {
 
 const OPEN_STATUSES: ConversationStatus[] = ["WAITING", "ASSIGNED", "ACTIVE", "ON_HOLD", "WRAP_UP"];
 
+let _cachedDefaultCountry: CountryCode | null = null;
+let _cacheExpiry = 0;
+
+async function getDefaultCountry(): Promise<CountryCode> {
+  if (_cachedDefaultCountry && Date.now() < _cacheExpiry) return _cachedDefaultCountry;
+  try {
+    const org = await getPrisma().organizationSettings.findUnique({
+      where: { id: "default" },
+      select: { default_country_code: true },
+    });
+    _cachedDefaultCountry = (org?.default_country_code ?? "EC") as CountryCode;
+  } catch {
+    _cachedDefaultCountry = "EC" as CountryCode;
+  }
+  _cacheExpiry = Date.now() + 60_000;
+  return _cachedDefaultCountry;
+}
+
+/**
+ * Strips non-digit chars preserving a leading '+'. No E.164 resolution —
+ * use this only when a DB/async lookup is not possible.
+ */
 export function normalizePhoneNumber(value: string | undefined): string | null {
   const cleaned = String(value ?? "").trim();
   if (!cleaned) return null;
@@ -38,6 +61,29 @@ export function normalizePhoneNumber(value: string | undefined): string | null {
   const digits = cleaned.replace(/[^\d]/g, "");
   if (!digits) return null;
   return `${plus}${digits}`;
+}
+
+/**
+ * Full E.164 normalization using libphonenumber-js.
+ * Falls back to basic digit stripping if parsing fails.
+ */
+export async function normalizePhoneE164(
+  value: string | undefined,
+  defaultCountry?: CountryCode,
+): Promise<string | null> {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  const country = defaultCountry ?? await getDefaultCountry();
+
+  try {
+    const parsed = parsePhoneNumberWithError(raw, country);
+    if (parsed.isValid()) return parsed.format("E.164");
+  } catch {
+    // fall through
+  }
+
+  return normalizePhoneNumber(raw);
 }
 
 function previewByState(state: VoiceCallState): string {
@@ -54,8 +100,8 @@ async function findOrCreateContact(input: VoiceCallEventInput) {
     if (existing) return existing;
   }
 
-  const caller = normalizePhoneNumber(input.callerNumber);
-  const dialed = normalizePhoneNumber(input.dialedNumber);
+  const caller = await normalizePhoneE164(input.callerNumber);
+  const dialed = await normalizePhoneE164(input.dialedNumber);
   const lookup = caller ?? dialed;
 
   if (!lookup) {
@@ -126,7 +172,7 @@ async function findOrCreateConversation(input: VoiceCallEventInput, contactId: s
       status: "WAITING",
       source: "voice",
       source_ref_id: input.externalCallId,
-      subject: normalizePhoneNumber(input.dialedNumber) || normalizePhoneNumber(input.callerNumber) || "Llamada de voz",
+      subject: (await normalizePhoneE164(input.dialedNumber)) || (await normalizePhoneE164(input.callerNumber)) || "Llamada de voz",
       last_message_at: input.timestamp ?? new Date(),
     },
   });
@@ -154,8 +200,8 @@ export async function upsertVoiceCallRecord(input: VoiceCallEventInput & { userI
   });
 
   const remoteUri =
-    normalizePhoneNumber(input.callerNumber) ??
-    normalizePhoneNumber(input.dialedNumber) ??
+    (await normalizePhoneE164(input.callerNumber)) ??
+    (await normalizePhoneE164(input.dialedNumber)) ??
     input.externalCallId;
 
   const data = {
@@ -238,8 +284,8 @@ export async function ingestVoiceCallEvent(
       voice_call_id: voiceCall.id,
       state: input.state,
       direction: input.direction ?? "inbound",
-      caller_number: normalizePhoneNumber(input.callerNumber),
-      dialed_number: normalizePhoneNumber(input.dialedNumber),
+      caller_number: await normalizePhoneE164(input.callerNumber),
+      dialed_number: await normalizePhoneE164(input.dialedNumber),
       asterisk_channel_id: input.asteriskChannelId ?? null,
       bridge_id: input.bridgeId ?? null,
       ...(input.durationSeconds !== undefined ? { duration_seconds: input.durationSeconds } : {}),
