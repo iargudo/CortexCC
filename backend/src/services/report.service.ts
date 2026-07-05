@@ -215,6 +215,66 @@ export async function slaReport(dateFrom: Date, dateTo: Date) {
   });
 }
 
+/**
+ * Conversion funnel: from created leads to handled and won (conversion),
+ * broken down by disposition and category. Conversions are counted using the
+ * generic `Disposition.is_conversion` flag (not a hardcoded category).
+ * `teamIds` optionally scopes the funnel (e.g. a coordinator's teams).
+ */
+export async function funnelReport(dateFrom: Date, dateTo: Date, teamIds?: string[] | null) {
+  const range = { gte: dateFrom, lte: dateTo };
+  const teamFilter =
+    teamIds && teamIds.length > 0 ? { queue: { team_id: { in: teamIds } } } : {};
+
+  const totalLeads = await getPrisma().conversation.count({
+    where: { created_at: range, ...teamFilter },
+  });
+
+  const grouped = await getPrisma().conversation.groupBy({
+    by: ["disposition_id"],
+    where: { resolved_at: range, disposition_id: { not: null }, ...teamFilter },
+    _count: true,
+  });
+
+  const dispositionIds = grouped.map((g) => g.disposition_id).filter((id): id is string => Boolean(id));
+  const dispositions = dispositionIds.length
+    ? await getPrisma().disposition.findMany({
+        where: { id: { in: dispositionIds } },
+        select: { id: true, name: true, category: true, is_conversion: true },
+      })
+    : [];
+  const dmap = new Map(dispositions.map((d) => [d.id, d]));
+
+  let handled = 0;
+  let conversions = 0;
+  const byCategory = new Map<string, number>();
+  const byDisposition = grouped.map((g) => {
+    const d = g.disposition_id ? dmap.get(g.disposition_id) : undefined;
+    const count = g._count;
+    handled += count;
+    if (d?.is_conversion) conversions += count;
+    const category = d?.category ?? "sin_categoria";
+    byCategory.set(category, (byCategory.get(category) ?? 0) + count);
+    return {
+      disposition: d?.name ?? "Sin disposición",
+      category,
+      is_conversion: d?.is_conversion ?? false,
+      count,
+    };
+  });
+
+  return {
+    total_leads: totalLeads,
+    handled,
+    conversions,
+    conversion_rate: handled > 0 ? Math.round((conversions / handled) * 100) : 0,
+    by_category: [...byCategory.entries()]
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count),
+    by_disposition: byDisposition.sort((a, b) => b.count - a.count),
+  };
+}
+
 function csvCell(v: string | number | boolean | null | undefined): string {
   const s = v === null || v === undefined ? "" : String(v);
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
@@ -225,9 +285,25 @@ function csvCell(v: string | number | boolean | null | undefined): string {
 export async function exportReportCsv(
   type: string,
   dateFrom: Date,
-  dateTo: Date
+  dateTo: Date,
+  teamIds?: string[] | null
 ): Promise<{ filename: string; body: string }> {
   const t = type.toLowerCase();
+  if (t === "funnel") {
+    const f = await funnelReport(dateFrom, dateTo, teamIds);
+    const lines = [["seccion", "clave", "valor"].join(",")];
+    lines.push(["resumen", "total_leads", f.total_leads].map(csvCell).join(","));
+    lines.push(["resumen", "atendidas", f.handled].map(csvCell).join(","));
+    lines.push(["resumen", "conversiones", f.conversions].map(csvCell).join(","));
+    lines.push(["resumen", "tasa_conversion_pct", f.conversion_rate].map(csvCell).join(","));
+    for (const c of f.by_category) {
+      lines.push(["categoria", c.category, c.count].map(csvCell).join(","));
+    }
+    for (const d of f.by_disposition) {
+      lines.push(["disposicion", d.disposition, d.count].map(csvCell).join(","));
+    }
+    return { filename: "embudo-conversion.csv", body: lines.join("\n") };
+  }
   if (t === "productivity") {
     const rows = await productivityReport(dateFrom, dateTo);
     const lines = [["agent", "conversations", "aht_seconds", "csat", "fcr", "status"].join(",")];

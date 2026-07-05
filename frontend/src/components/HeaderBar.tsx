@@ -24,6 +24,7 @@ const statusOptions: { value: AgentStatus; label: string; emoji: string }[] = [
   { value: "AWAY", label: "Ausente", emoji: "🟡" },
   { value: "BUSY", label: "Ocupado", emoji: "🔴" },
   { value: "ON_BREAK", label: "En descanso", emoji: "🟣" },
+  { value: "FOLLOW_UP", label: "Solo seguimiento", emoji: "🔵" },
   { value: "OFFLINE", label: "Desconectado", emoji: "⚫" },
 ];
 

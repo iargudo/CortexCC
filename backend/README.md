@@ -48,7 +48,8 @@ Si Redis o Postgres usan otro host/puerto, reflejalo en `.env` (sin cambiar el p
 | `DATABASE_URL` | BD tenant local — scripts CLI (`migrate:tenant`, `seed:tenant`) |
 | `TENANT_DB_*` | Alternativa a `DATABASE_URL` para scripts por tenant |
 | `REDIS_URL` | Redis for BullMQ and locks (local) |
-| `JWT_SECRET` / `JWT_REFRESH_SECRET` | Min 32 characters each |
+| `JWT_SECRET` | Min 32 characters; access token signing |
+| `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | Access and refresh token TTL (e.g. `15m`, `30d`) |
 | `CORS_ORIGIN` | Browser origin for the frontend (e.g. `http://localhost:8080`) |
 | `SOCKETIO_CORS_ORIGIN` | Optional; defaults to `CORS_ORIGIN` |
 | `INTEGRATION_API_KEY` | `x-api-key` for `/integrations/*` |
@@ -57,15 +58,31 @@ Si Redis o Postgres usan otro host/puerto, reflejalo en `.env` (sin cambiar el p
 ## Scripts multi-tenant
 
 ```bash
-npm run setup:master          # crea Master + tabla tenants
-npm run migrate:tenant        # migra una BD tenant
+npm run setup:master          # Master DB + registro tenants (primera vez)
+npm run setup:platform-admin  # admin del panel /platform
+npm run bootstrap:tenant      # deploy: registra tenant + línea base
+npm run migrate:tenant          # migra una BD tenant
 npm run migrate:all-tenants   # migra todos los tenants activos
-npm run seed:tenant           # seed en una BD tenant
+npm run seed:baseline         # línea base (roles + org) en BD tenant
+npm run seed:tenant           # demo local (baseline + usuarios @cortex.local)
+npm run setup:puntonet        # configuración operativa Puntonet (sobre baseline)
 ```
+
+### Flujo tras desplegar (producción)
+
+1. `setup:master` + `setup:platform-admin` (deploy script)
+2. `bootstrap:tenant` → migra BD y aplica **línea base** (sin operación de empresa)
+3. `setup:puntonet` → configuración del cliente (equipos, colas, usuarios Puntonet)
+
+API plataforma equivalente: `POST /tenants/:key/seed-baseline` y `POST /tenants/:key/setup-puntonet`.
+
+### Alta de un tenant nuevo
+
+Usa el panel `/platform/tenants` o `POST /api/platform/tenants` (aplica línea base automáticamente; `seed: true` solo en staging).
 
 ## Avances recientes (API)
 
-- **Multi-tenant:** header `X-Tenant-Key` en casi todas las rutas; JWT incluye `tenantKey`; `GET /tenants/resolve?host=`.
+- **Multi-tenant:** header `X-Tenant-Key` en casi todas las rutas; JWT incluye `tenantKey`; `GET /tenants/resolve?host=`; administración de tenants en `/api/platform/*` y UI `/platform`.
 - **`POST /api/conversations`**: alta manual (contacto existente o inline), canal por `channel_id` o `channel_type`, cola opcional, `initial_message` opcional (encola envío outbound).
 - **`GET /api/conversations/:id/context`**: contexto de escalamiento (`source`, `escalation_reason`, `escalation_context`, contacto/canal/cola).
 - **`POST /api/auth/change-password`**: con sesión JWT; body `current_password`, `new_password` (mín. 8 caracteres); invalida refresh tokens.

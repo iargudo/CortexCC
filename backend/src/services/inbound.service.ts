@@ -2,7 +2,9 @@ import type { IncomingMessage } from "../channels/ChannelAdapter.js";
 import { getPrisma } from "../lib/prisma.js";
 import { canonicalPhone, phoneCandidates } from "../lib/phone.js";
 import { enqueueRouting } from "../queue/bull.js";
+import { resolveInboundQueueId } from "../routing/coordinationDispatcher.js";
 import { scheduleInitialSlaCheck } from "./slaCheck.service.js";
+import { onConversationEnqueued } from "./queuePolicy.service.js";
 
 const OPEN_STATUSES = ["WAITING", "ASSIGNED", "ACTIVE", "ON_HOLD", "WRAP_UP"] as const;
 const STATUS_PRIORITY: Record<(typeof OPEN_STATUSES)[number], number> = {
@@ -80,12 +82,12 @@ export async function ingestIncomingMessage(
 
   let createdConversation = false;
   if (!conversation) {
-    const defaultQueue = await getPrisma().queue.findFirst({ where: { is_active: true } });
+    const queueId = await resolveInboundQueueId(channelId);
     conversation = await getPrisma().conversation.create({
       data: {
         channel_id: channelId,
         contact_id: contact.id,
-        queue_id: defaultQueue?.id,
+        queue_id: queueId,
         status: "WAITING",
         source: "direct",
         last_message_at: incoming.timestamp,
@@ -138,6 +140,7 @@ export async function ingestIncomingMessage(
     await enqueueRouting({ conversationId: conversation.id });
     if (conversation.queue_id) {
       await scheduleInitialSlaCheck(conversation.id, conversation.queue_id);
+      await onConversationEnqueued(conversation.id, conversation.queue_id);
     }
   }
 

@@ -20,7 +20,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FRONTEND_ENV="$ROOT_DIR/frontend/.env"
 BACKEND_ENV="$ROOT_DIR/backend/.env"
 PJSIP_CONF="$ROOT_DIR/deploy/asterisk/conf/pjsip.conf"

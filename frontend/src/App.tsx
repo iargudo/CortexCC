@@ -7,8 +7,14 @@ import { useAuthStore } from "@/stores/authStore";
 import { useTenantStore } from "@/stores/tenantStore";
 import { AuthBootstrap } from "@/components/AuthBootstrap";
 import { TenantBootstrap } from "@/components/TenantBootstrap";
+import { PlatformAuthBootstrap } from "@/components/PlatformAuthBootstrap";
+import { PlatformProtectedRoute } from "@/components/PlatformProtectedRoute";
 import AppLayout from "@/components/AppLayout";
+import PlatformLayout from "@/components/PlatformLayout";
 import LoginPage from "@/pages/LoginPage";
+import PlatformLoginPage from "@/pages/platform/PlatformLoginPage";
+import PlatformTenantsPage from "@/pages/platform/PlatformTenantsPage";
+import PlatformAdminsPage from "@/pages/platform/PlatformAdminsPage";
 import TenantErrorPage from "@/pages/TenantErrorPage";
 import InboxPage from "@/pages/InboxPage";
 import DashboardPage from "@/pages/DashboardPage";
@@ -63,40 +69,72 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function TenantAppRoutes() {
+  return (
+    <>
+      <TenantBootstrap />
+      <AuthBootstrap />
+      <AppGate>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
+            <Route path="/" element={<InboxPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/queues-live" element={<QueuesLivePage />} />
+            <Route path="/supervisor" element={<SupervisorPage />} />
+            <Route path="/contacts" element={<ContactsPage />} />
+            <Route path="/quality" element={<QualityPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/dialer" element={<DialerCampaignsPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/settings/queues" element={<SettingsQueuesPage />} />
+            <Route path="/settings/channels" element={<SettingsChannelsPage />} />
+            <Route path="/settings/teams" element={<SettingsTeamsPage />} />
+            <Route path="/settings/skills" element={<SettingsSkillsPage />} />
+            <Route path="/settings/roles" element={<RolesPage />} />
+            <Route path="/settings/users" element={<SettingsUsersPage />} />
+            <Route path="/settings/integrations" element={<IntegrationsPage />} />
+            <Route path="/settings/telephony" element={<SettingsTelephonyPage />} />
+            <Route path="/settings/general" element={<SettingsGeneralPage />} />
+          </Route>
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </AppGate>
+    </>
+  );
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <TenantBootstrap />
-        <AuthBootstrap />
-        <AppGate>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
-              <Route path="/" element={<InboxPage />} />
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/queues-live" element={<QueuesLivePage />} />
-              <Route path="/supervisor" element={<SupervisorPage />} />
-              <Route path="/contacts" element={<ContactsPage />} />
-              <Route path="/quality" element={<QualityPage />} />
-              <Route path="/reports" element={<ReportsPage />} />
-              <Route path="/dialer" element={<DialerCampaignsPage />} />
-              <Route path="/profile" element={<ProfilePage />} />
-              <Route path="/settings/queues" element={<SettingsQueuesPage />} />
-              <Route path="/settings/channels" element={<SettingsChannelsPage />} />
-              <Route path="/settings/teams" element={<SettingsTeamsPage />} />
-              <Route path="/settings/skills" element={<SettingsSkillsPage />} />
-              <Route path="/settings/roles" element={<RolesPage />} />
-              <Route path="/settings/users" element={<SettingsUsersPage />} />
-              <Route path="/settings/integrations" element={<IntegrationsPage />} />
-              <Route path="/settings/telephony" element={<SettingsTelephonyPage />} />
-              <Route path="/settings/general" element={<SettingsGeneralPage />} />
-            </Route>
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AppGate>
+        <Routes>
+          <Route
+            path="/platform/*"
+            element={
+              <>
+                <PlatformAuthBootstrap />
+                <Routes>
+                  <Route path="login" element={<PlatformLoginPage />} />
+                  <Route
+                    element={
+                      <PlatformProtectedRoute>
+                        <PlatformLayout />
+                      </PlatformProtectedRoute>
+                    }
+                  >
+                    <Route index element={<Navigate to="tenants" replace />} />
+                    <Route path="tenants" element={<PlatformTenantsPage />} />
+                    <Route path="admins" element={<PlatformAdminsPage />} />
+                  </Route>
+                </Routes>
+              </>
+            }
+          />
+          <Route path="/*" element={<TenantAppRoutes />} />
+        </Routes>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

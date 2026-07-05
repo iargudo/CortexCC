@@ -141,8 +141,12 @@ La base Master solo se actualiza con `npm run setup:master` (cambios en `master.
 
 ### Alta de tenant nuevo
 
+**Recomendado:** panel `{frontend}/platform/tenants` o API `POST /api/platform/tenants`.
+
+Pasos manuales equivalentes:
+
 1. Crear BD vacia en PostgreSQL.
 2. `npm run migrate:tenant` (con `TENANT_DB_*` o `DATABASE_URL`).
-3. `npm run seed:tenant` (opcional, demo/staging).
+3. `npm run seed:tenant` (opcional, demo/staging) o admin desde el panel `/platform`.
 4. INSERT en Master (`tenants`) con dominio + credenciales + `is_active=true`.
 5. Registrar hostname en DNS apuntando al despliegue frontend unico.

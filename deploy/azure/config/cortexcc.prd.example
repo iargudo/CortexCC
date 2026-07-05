@@ -1,0 +1,61 @@
+# Plantilla produccion — copiar a deploy/azure/config/cortexcc.prd
+# Deploy: ./deploy/azure/cortexcc/deploy-cortexcc.sh prd
+
+CORTEXCC_ENV=prd
+
+# --- Recursos Azure ---
+RESOURCE_GROUP=rg-cortexcc-prd-001
+LOCATION=canadacentral
+APP_SERVICE_PLAN=plan-cortexcc-prd-001
+BACKEND_WEBAPP_NAME=app-back-cortexcc-prd-001
+FRONTEND_WEBAPP_NAME=app-front-cortexcc-prd-001
+ACR_NAME=acrcortexccprd001
+APP_SERVICE_SKU=P1v3
+AZURE_WEBAPP_RUNTIME=NODE:22-lts
+
+REDIS_NAME=redis-cortexcc-prd-001
+REDIS_SKU=Standard
+REDIS_VM_SIZE=C1
+REDIS_DB=2
+MANAGE_REDIS=true
+SKIP_REDIS_CREATE=false
+
+BACKEND_PORT=3030
+FRONTEND_PORT=8080
+API_PREFIX=/api
+
+JWT_SECRET=GENERA_UN_SECRETO_LARGO_Y_UNICO
+# Opcional; si se omite en prd se deriva de JWT_SECRET
+# PLATFORM_JWT_SECRET=GENERA_SECRETO_PLATFORM_ADMIN
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=30d
+
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/cortexcontact?sslmode=require"
+MASTER_DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/cortexcc_master?sslmode=require"
+RUN_SETUP_MASTER=true
+RUN_SETUP_PLATFORM_ADMIN=true
+PLATFORM_ADMIN_EMAIL=platform@empresa.com
+PLATFORM_ADMIN_PASSWORD=CAMBIAR_PASSWORD_PLATFORM_ADMIN
+BOOTSTRAP_TENANT=true
+TENANT_KEY=cortexcc
+TENANT_NAME="CortexCC Produccion"
+TENANT_SUBDOMAIN=cortexcc
+# TENANT_CUSTOM_DOMAIN=app.tudominio.com
+# Tras bootstrap: npm run setup:puntonet (o POST /api/platform/tenants/{key}/setup-puntonet)
+# PUNTONET_DEFAULT_PASSWORD=PuntonetVentas2026!
+# TENANT_DB_NAME=cortexcc01
+# TENANT_SKIP_DB_CREATE=true
+
+REDIS_URL=
+
+QUEUE_CONCURRENCY=10
+ENABLE_JOBS=true
+SOCKETIO_PATH=/socket.io
+INTEGRATION_API_KEY=GENERA_CLAVE_FUERTE_MIN_8_CHARS
+PRISMA_LOG_QUERIES=false
+
+RUN_PRISMA_SEED=false
+
+STORAGE_PROVIDER=azure
+AZURE_STORAGE_CONNECTION_STRING=
+AZURE_STORAGE_CONTAINER=attachments

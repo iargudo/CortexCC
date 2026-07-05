@@ -106,6 +106,7 @@ export default function ProfilePage() {
                 <SelectItem value="AWAY">🟡 Ausente</SelectItem>
                 <SelectItem value="BUSY">🔴 Ocupado</SelectItem>
                 <SelectItem value="ON_BREAK">🟣 En descanso</SelectItem>
+                <SelectItem value="FOLLOW_UP">🔵 Solo seguimiento</SelectItem>
                 <SelectItem value="OFFLINE">⚫ Desconectado</SelectItem>
               </SelectContent>
             </Select>

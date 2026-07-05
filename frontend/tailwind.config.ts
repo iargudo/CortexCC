@@ -48,6 +48,7 @@ export default {
           busy: "hsl(var(--status-busy))",
           offline: "hsl(var(--status-offline))",
           break: "hsl(var(--status-break))",
+          "follow-up": "hsl(var(--status-follow-up))",
         },
         priority: {
           high: "hsl(var(--priority-high))",

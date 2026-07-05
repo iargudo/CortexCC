@@ -58,6 +58,7 @@
     --status-busy: 0 72% 51%;
     --status-offline: 220 10% 60%;
     --status-break: 280 60% 55%;
+    --status-follow-up: 210 90% 55%;
 
     /* Surfaces */
     --surface-agent-msg: 234 62% 50%;

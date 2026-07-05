@@ -33,7 +33,7 @@ type SoftphoneAssignResult = {
 
 const ASSIGNABLE_ROLES = ["agent", "supervisor", "admin"] as const;
 
-const AGENT_STATUSES = ["ONLINE", "AWAY", "BUSY", "OFFLINE", "ON_BREAK"] as const;
+const AGENT_STATUSES = ["ONLINE", "AWAY", "BUSY", "OFFLINE", "ON_BREAK", "FOLLOW_UP"] as const;
 
 function primaryRoleName(roles: ApiUser["roles"]): string {
   const names = roles.map((r) => r.role.name);

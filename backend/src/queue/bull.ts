@@ -6,6 +6,7 @@ const connection = { url: env.REDIS_URL };
 
 export const routingQueue = new Queue("routing", { connection });
 export const slaCheckQueue = new Queue("sla-check", { connection });
+export const overflowCheckQueue = new Queue("overflow-check", { connection });
 export const outboundMessagesQueue = new Queue("outbound-messages", { connection });
 export const dialerProgressiveQueue = new Queue("dialer-progressive", { connection });
 export const dialerPredictiveQueue = new Queue("dialer-predictive", { connection });
@@ -35,6 +36,18 @@ export async function enqueueSlaCheck(
     withTenantKey(data),
     { delay: 10_000, attempts: 5, backoff: { type: "fixed", delay: 10_000 }, ...opts }
   );
+}
+
+export async function enqueueOverflowCheck(
+  data: { conversationId: string; queueId: string },
+  opts?: JobsOptions
+): Promise<void> {
+  await overflowCheckQueue.add("check", withTenantKey(data), {
+    delay: 10_000,
+    attempts: 3,
+    backoff: { type: "fixed", delay: 10_000 },
+    ...opts,
+  });
 }
 
 export async function enqueueOutbound(data: { messageId: string }, opts?: JobsOptions): Promise<void> {
@@ -94,6 +107,16 @@ export function createRoutingWorker(process: WorkerProcessor): Worker {
 export function createSlaWorker(process: WorkerProcessor): Worker {
   return new Worker(
     "sla-check",
+    async (job) => {
+      await process(job as { data: Record<string, unknown> });
+    },
+    { connection, concurrency: env.QUEUE_CONCURRENCY }
+  );
+}
+
+export function createOverflowWorker(process: WorkerProcessor): Worker {
+  return new Worker(
+    "overflow-check",
     async (job) => {
       await process(job as { data: Record<string, unknown> });
     },

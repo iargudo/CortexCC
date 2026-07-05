@@ -10,7 +10,7 @@ Este directorio centraliza la documentacion funcional y tecnica del proyecto Cor
 - `04-frontend-modulos-flujos.md`: estructura del frontend, pantallas, estado y experiencia operativa.
 - `05-telefonia-asterisk-softphone.md`: integracion SIP/WebRTC, extensiones, dialplan y troubleshooting.
 - `06-modelo-datos-prisma.md`: modelo de datos real en Prisma y relaciones principales.
-- `07-despliegue-operacion.md`: despliegue local y AWS CLI, validaciones operativas y checklist.
+- `07-despliegue-operacion.md`: despliegue local y Azure, validaciones operativas y checklist.
 - `08-manual-configuracion-cliente-nuevo.md`: guia paso a paso para configurar CortexCC desde cero en un cliente nuevo (infraestructura, UI, canales, voz e integraciones).
 - `09-manual-administrador.md`: manual funcional para el administrador de la operacion (colas, usuarios, canales, SLA, integraciones; sin contenido tecnico).
 - `ESTANDAR_ARQUITECTURA_MULTITENANT.md`: estandar completo de arquitectura multi-tenant (database-per-tenant, Master DB, `X-Tenant-Key`, migraciones).
@@ -42,7 +42,7 @@ Si vas a desplegar por primera vez, sigue el orden de `08-manual-configuracion-c
 6. Integraciones externas
 7. Checklist de validacion
 
-**Alta de tenant adicional:** crear BD vacia → `migrate:tenant` → `seed:tenant` → INSERT en Master → DNS. Ver seccion correspondiente en `08-manual-configuracion-cliente-nuevo.md`.
+**Alta de tenant adicional:** panel `{frontend}/platform/tenants` o API `POST /api/platform/tenants`. Resumen en seccion 12 de [08-manual-configuracion-cliente-nuevo.md](./08-manual-configuracion-cliente-nuevo.md).
 
 ## Alcance
 
@@ -51,15 +51,15 @@ La documentacion esta alineada al codigo actual de:
 - `backend/`
 - `frontend/`
 - `deploy/asterisk/`
-- `deploy/aws/`
 - `deploy/azure/`
 
-## Scripts de desarrollo (`scripts/`)
+## Scripts operativos
 
-| Script | Uso |
-|--------|-----|
-| `set-lan-ip.sh` | Alinea la IP LAN del Mac en `.env`, BD (tenant + softphone), `pjsip.conf` y agentes WebRTC. Ver [05-telefonia-asterisk-softphone.md](./05-telefonia-asterisk-softphone.md#pruebas-en-lan-desarrollo). |
-| `run-smoke-voice-lab.sh` / `smoke-voice-lab.sh` | Pruebas de voz automatizadas en laboratorio. |
+| Script | Ubicacion | Uso |
+|--------|-----------|-----|
+| `npm run bootstrap:tenant` | `backend/scripts/bootstrap-tenant-env.ts` | Solo deploy: primer tenant desde `TENANT_*` en env. Operación: panel `/platform`. |
+| `set-lan-ip.sh` | `scripts/` | Alinea la IP LAN del Mac en `.env`, BD (tenant + softphone), `pjsip.conf` y agentes WebRTC. Ver [05-telefonia-asterisk-softphone.md](./05-telefonia-asterisk-softphone.md#pruebas-en-lan-desarrollo). |
+| `run-smoke-voice-lab.sh` / `smoke-voice-lab.sh` | `scripts/` | Pruebas de voz automatizadas en laboratorio. |
 
 ## Convenciones
 

@@ -20,6 +20,26 @@ ALTER TABLE "conversation_assignments" ADD COLUMN IF NOT EXISTS "ring_started_at
 ALTER TABLE "conversation_assignments" ADD COLUMN IF NOT EXISTS "telephony_answered_at" TIMESTAMP(3);
 ALTER TABLE "conversation_assignments" ADD COLUMN IF NOT EXISTS "telephony_outcome" "TelephonyOutcome";
 
+CREATE TABLE IF NOT EXISTS "voice_calls" (
+    "id" TEXT NOT NULL,
+    "user_id" TEXT,
+    "external_call_id" TEXT NOT NULL,
+    "remote_uri" TEXT NOT NULL,
+    "remote_display_name" TEXT,
+    "direction" TEXT NOT NULL,
+    "state" TEXT NOT NULL,
+    "started_at" TIMESTAMP(3),
+    "ended_at" TIMESTAMP(3),
+    "duration_seconds" INTEGER,
+    "metadata" JSONB,
+    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "voice_calls_pkey" PRIMARY KEY ("id")
+);
+CREATE INDEX IF NOT EXISTS "voice_calls_user_id_created_at_idx" ON "voice_calls"("user_id", "created_at");
+CREATE INDEX IF NOT EXISTS "voice_calls_external_call_id_idx" ON "voice_calls"("external_call_id");
+ALTER TABLE "voice_calls" ADD CONSTRAINT "voice_calls_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
 ALTER TABLE "voice_calls" ADD COLUMN IF NOT EXISTS "conversation_id" TEXT;
 ALTER TABLE "voice_calls" ADD COLUMN IF NOT EXISTS "channel_id" TEXT;
 ALTER TABLE "voice_calls" ADD COLUMN IF NOT EXISTS "contact_id" TEXT;

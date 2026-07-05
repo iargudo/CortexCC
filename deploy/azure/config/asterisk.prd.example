@@ -1,0 +1,32 @@
+# Plantilla produccion — copiar a deploy/azure/config/asterisk.prd
+# Deploy: ./deploy/azure/asterisk/deploy-asterisk-vm.sh prd
+# Requiere deploy/azure/config/cortexcc.prd del mismo ambiente
+
+ASTERISK_RESOURCE_GROUP=rg-cortexcc-pbx-prd-001
+ASTERISK_VM_NAME=vm-asterisk-cortexcc-prd-001
+ASTERISK_PUBLIC_IP_NAME=pip-asterisk-cortexcc-prd-001
+ASTERISK_NSG_NAME=nsg-asterisk-cortexcc-prd-001
+ASTERISK_NIC_NAME=nic-asterisk-cortexcc-prd-001
+ASTERISK_VNET_NAME=vnet-asterisk-cortexcc-prd-001
+ASTERISK_SUBNET_NAME=snet-asterisk-cortexcc-prd-001
+ASTERISK_VM_SIZE=Standard_B2s
+ASTERISK_ADMIN_USER=azureuser
+ASTERISK_FQDN=pbx.empresa.com
+MANAGE_ASTERISK_VM=true
+INTEGRATE_CORTEXCC=true
+ASTERISK_RESTRICT_ARI_TO_BACKEND=true
+CREATE_VOICE_CHANNEL=true
+VOICE_CHANNEL_NAME=Telefonía PBX
+CORTEXCC_DEPLOY_JWT=
+ASTERISK_ARI_APP=cortexcc
+ASTERISK_ARI_USERNAME=cortexcc
+ASTERISK_ARI_PASSWORD=CAMBIAR_PASSWORD_FUERTE
+ASTERISK_SIP_PORT=5060
+ASTERISK_RTP_START=10000
+ASTERISK_RTP_END=10100
+ASTERISK_ARI_PUBLIC_PORT=8074
+ASTERISK_WSS_PORT=8089
+ASTERISK_TZ=America/Guayaquil
+TRUNK_HOST=sip.carrier.example.com
+TRUNK_USER=
+TRUNK_PASS=

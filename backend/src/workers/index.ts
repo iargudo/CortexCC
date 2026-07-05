@@ -3,6 +3,7 @@ import {
   createDialerPredictiveWorker,
   createDialerProgressiveWorker,
   createOutboundWorker,
+  createOverflowWorker,
   createRecordingUploadWorker,
   createRoutingWorker,
   createSlaWorker,
@@ -17,6 +18,7 @@ import { startVoiceAsteriskListeners } from "../services/voiceAsterisk.service.j
 import { runProgressiveDialerTick } from "../services/dialer/progressiveDialer.service.js";
 import { runPredictiveDialerTick } from "../services/dialer/predictiveDialer.service.js";
 import { runSlaCheck } from "../services/slaCheck.service.js";
+import { runOverflowCheck } from "../services/queuePolicy.service.js";
 import { processRecordingUpload } from "../services/voice/recording.service.js";
 
 async function withJobTenant<T>(
@@ -46,6 +48,16 @@ export function startWorkers(io: Server | null): void {
     if (!tenantKey || !conversationId || !queueId) return;
     await withJobTenant(tenantKey, async () => {
       await runSlaCheck(conversationId, queueId, io);
+    });
+  });
+
+  createOverflowWorker(async (job) => {
+    const tenantKey = job.data.tenantKey as string | undefined;
+    const conversationId = job.data.conversationId as string | undefined;
+    const queueId = job.data.queueId as string | undefined;
+    if (!tenantKey || !conversationId || !queueId) return;
+    await withJobTenant(tenantKey, async () => {
+      await runOverflowCheck(conversationId, queueId, io);
     });
   });
 
@@ -96,6 +108,6 @@ export function startWorkers(io: Server | null): void {
   });
 
   console.log(
-    "BullMQ workers listening (routing, sla-check, outbound-messages, dialer-progressive, dialer-predictive, recording-upload, email-poller, voice-ari)"
+    "BullMQ workers listening (routing, sla-check, overflow-check, outbound-messages, dialer-progressive, dialer-predictive, recording-upload, email-poller, voice-ari)"
   );
 }

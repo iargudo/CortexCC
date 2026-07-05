@@ -305,6 +305,9 @@ ventas.clientec.com ┘                                      │
 
 Alta de cliente nuevo:
 1. Crear BD del tenant + aplicar esquema/migraciones + seeds.
+2. Registrar fila en Master con dominio y credenciales.
+
+En CortexCC, el paso 1–4 se automatiza desde el panel `/platform/tenants` o la API `/api/platform/tenants`.
 2. Insertar fila en `Tenants` (dominio + credenciales).
 3. Registrar hostname en el despliegue frontend + DNS.
 4. **No** crear nuevo despliegue de frontend.
@@ -323,7 +326,9 @@ MASTER_DATABASE_PASSWORD=...
 MASTER_DATABASE_NAME=...        # base Master
 
 JWT_SECRET=...
-JWT_REFRESH_SECRET=...
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=30d
+# PLATFORM_JWT_SECRET=...   # opcional; panel /platform
 ```
 
 ### Frontend — desarrollo
@@ -400,7 +405,7 @@ La guía **no** prescribe cuál usar. Lo importante es el **patrón de ejecució
 
 ### 9.4 Scripts que debes implementar
 
-Tres scripts CLI (nombres orientativos):
+Cuatro scripts CLI en CortexCC (tres de migración + uno de alta):
 
 #### A) `setup-master`
 
@@ -421,6 +426,17 @@ Tres scripts CLI (nombres orientativos):
 - `SELECT tenant_key, database_host, database_port, database_user, database_password, database_name FROM Tenants WHERE is_active = true`
 - Por **cada fila**: invoca `migrate-tenant` con esas credenciales.
 - Si **uno falla**: reportar cuál y salir con error (no silenciar).
+
+#### D) Alta de tenant (CortexCC)
+
+- Orquesta el **alta completa** de un tenant nuevo (panel `/platform`, API o bootstrap de deploy).
+- Valida `tenant_key`, `subdomain` y `custom_domain` contra conflictos en Master.
+- `CREATE DATABASE` (salvo BD ya existente).
+- Invoca `migrate-tenant` en la BD nueva.
+- Opcional: seed demo o admin de producción.
+- **Registra en Master al final** (después del migrate).
+- **Servicio:** `backend/src/services/platform/tenantProvisioning.service.ts`.
+- **Deploy (primer tenant):** `npm run bootstrap:tenant` con `TENANT_*` en env.
 
 Pseudocódigo:
 
@@ -451,6 +467,11 @@ if failures:
 **BD tenant nueva (vacía):**
 
 ```
+Opción automatizada (CortexCC):
+  Panel /platform/tenants  o  POST /api/platform/tenants
+  (primer deploy: BOOTSTRAP_TENANT=true en config Azure)
+
+Opción manual:
 1. Crear BD en el servidor
 2. migrate-tenant          → aplica todas las migraciones desde cero
 3. seed                    → datos iniciales (permisos, catálogos, admin)
@@ -484,13 +505,12 @@ Si un tenant falla la migración, **no desplegar** hasta corregir.
 
 | Paso | Acción |
 |------|--------|
-| 1 | Crear BD vacía |
-| 2 | `migrate-tenant` (esquema completo al día) |
-| 3 | Seeds iniciales |
-| 4 | `INSERT` en Master con dominio + credenciales + `is_active = true` |
+| 1 | Panel `/platform` o crear BD vacía manualmente |
+| 2 | `migrate-tenant` (incluido en el alta automatizada) |
+| 3 | Seeds iniciales o admin del tenant |
+| 4 | Registro en Master (incluido en el alta automatizada) |
 | 5 | Registrar hostname en frontend + DNS |
-| 6 | Crear usuario admin en el backoffice de **ese** tenant |
-| 7 | Verificar login vía URL del cliente |
+| 6 | Verificar login vía URL del cliente |
 
 No registrar en Master antes de que la BD tenga el esquema migrado.
 
@@ -507,7 +527,7 @@ BACKEND
  5. Controlador: resolve + current
  6. Persistencia usa Connection Manager
  7. JWT con tenantKey
- 8. Scripts: setup-master, migrate-tenant, migrate-all-tenants
+ 8. Scripts: setup-master, bootstrap-tenant, migrate-tenant, migrate-all-tenants
  9. Verificar con curl (sección 11)
 
 FRONTEND
@@ -578,7 +598,7 @@ TENANT_DB_NAME=AppDB_Local ./scripts/migrate-tenant
 - [ ] Sin listado público de tenants
 - [ ] Middleware + Connection Manager + contexto por petición
 - [ ] JWT con tenantKey validado contra header
-- [ ] Scripts: setup-master, migrate-tenant, migrate-all-tenants
+- [ ] Scripts: setup-master, bootstrap-tenant, migrate-tenant, migrate-all-tenants
 
 **Frontend**
 - [ ] resolveTenant() en boot (env dev / hostname prod)
@@ -598,7 +618,27 @@ TENANT_DB_NAME=AppDB_Local ./scripts/migrate-tenant
 
 ---
 
-## 14. Referencia CortexSales (NestJS + TypeORM + SQL Server)
+## 14. Referencia CortexCC (Node.js + Prisma + PostgreSQL)
+
+Implementación concreta en este repositorio:
+
+| Concepto genérico | En CortexCC |
+|-------------------|-------------|
+| ORM | Prisma |
+| Motor BD | PostgreSQL |
+| setup-master | `backend/scripts/setup-master.ts` → `npm run setup:master` |
+| bootstrap-tenant | `backend/scripts/bootstrap-tenant-env.ts` → deploy con `TENANT_*` |
+| Alta operativa | Panel `/platform/tenants` + `tenantProvisioning.service.ts` |
+| migrate-tenant | `backend/scripts/migrate-tenant.ts` → `npm run migrate:tenant` |
+| migrate-all-tenants | `backend/scripts/migrate-all-tenants.ts` → `npm run migrate:all-tenants` |
+| Seed tenant | `backend/prisma/seed.ts` → `npm run seed:tenant` |
+| Connection Manager | `backend/src/lib/tenantConnectionManager.ts` |
+| Middleware | `backend/src/middleware/tenant.ts` |
+| Tabla control migraciones | `_prisma_migrations` (Prisma) |
+
+---
+
+## 15. Referencia CortexSales (NestJS + TypeORM + SQL Server)
 
 Implementación concreta del patrón anterior. **No copies literalmente** si tu stack es distinto; usa la sección 9 para el mecanismo agnóstico.
 
@@ -621,7 +661,7 @@ Deploy Azure: `scripts/deploy-azure.sh` ejecuta setup-master y migrate-all-tenan
 
 ---
 
-## 15. Cuándo leer el estándar completo
+## 16. Cuándo leer el estándar completo
 
 Usa `ESTANDAR_ARQUITECTURA_MULTITENANT.md` para:
 

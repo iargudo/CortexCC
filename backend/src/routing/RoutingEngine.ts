@@ -14,7 +14,16 @@ export interface AgentScore {
   lastAssignedAt: Date | null;
   lastEndedAt: Date | null;
   skillScore: number;
+  /** For PRIORITY_BASED: agent conversion rate (0..1), Laplace-smoothed. */
   priorityScore: number;
+}
+
+/**
+ * Conversion rate with Laplace smoothing so agents without history are not
+ * stuck at 0 nor dominate with a perfect-but-tiny sample.
+ */
+export function conversionScore(salesWon: number, salesTotal: number): number {
+  return (salesWon + 1) / (salesTotal + 2);
 }
 
 export function rankAgentsByStrategy(agents: AgentScore[], strategy: RoutingStrategy): AgentScore[] {
@@ -109,7 +118,9 @@ export class RoutingEngine {
   }
 
   private async getEligibleAgents(queue: QueueWithRelations): Promise<AgentScore[]> {
-    const teamUserIds = queue.team?.members.map((m) => m.user_id) ?? null;
+    // Los coordinadores del equipo supervisan, no reciben conversaciones.
+    const teamUserIds =
+      queue.team?.members.filter((m) => m.role !== "coordinator").map((m) => m.user_id) ?? null;
 
     const users = await this.prisma.user.findMany({
       where: {
@@ -164,7 +175,7 @@ export class RoutingEngine {
         lastAssignedAt: lastAssignment?.assigned_at ?? null,
         lastEndedAt: lastResolved?.ended_at ?? null,
         skillScore,
-        priorityScore: u.status === "ONLINE" ? 2 : 1,
+        priorityScore: conversionScore(u.sales_won, u.sales_total),
       });
     }
 

@@ -16,7 +16,7 @@ export default function InboxPage() {
   const conversationFromUrl = searchParams.get("conversation");
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const user = useAuthStore((s) => s.user);
-  const showAllTab = user?.role === "admin" || user?.role === "supervisor";
+  const showAllTab = user?.role === "admin" || Boolean(user?.permissions?.supervisor);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<"mine" | "queue" | "all">("mine");
   const [channelFilter, setChannelFilter] = useState<ChannelType | null>(null);

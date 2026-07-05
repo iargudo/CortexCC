@@ -1,6 +1,10 @@
 import "dotenv/config";
 import { execSync } from "node:child_process";
-import pg from "pg";
+import {
+  adminPostgresUrl,
+  ensureDatabaseExists,
+  parsePostgresUrl,
+} from "../src/lib/postgresUtil.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name]?.trim();
@@ -11,42 +15,11 @@ function requireEnv(name: string): string {
   return v;
 }
 
-function parseMasterUrl(url: string): { host: string; port: number; user: string; password: string; database: string } {
-  const parsed = new URL(url);
-  return {
-    host: parsed.hostname,
-    port: parsed.port ? Number(parsed.port) : 5432,
-    user: decodeURIComponent(parsed.username),
-    password: decodeURIComponent(parsed.password),
-    database: parsed.pathname.replace(/^\//, ""),
-  };
-}
-
-async function ensureDatabaseExists(adminUrl: string, dbName: string): Promise<void> {
-  const cfg = parseMasterUrl(adminUrl);
-  const client = new pg.Client({
-    host: cfg.host,
-    port: cfg.port,
-    user: cfg.user,
-    password: cfg.password,
-    database: "postgres",
-  });
-  await client.connect();
-  const exists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [dbName]);
-  if (exists.rowCount === 0) {
-    await client.query(`CREATE DATABASE "${dbName.replace(/"/g, '""')}"`);
-    console.log(`Created database: ${dbName}`);
-  } else {
-    console.log(`Database already exists: ${dbName}`);
-  }
-  await client.end();
-}
-
 async function main(): Promise<void> {
   const masterUrl = requireEnv("MASTER_DATABASE_URL");
-  const cfg = parseMasterUrl(masterUrl);
+  const cfg = parsePostgresUrl(masterUrl);
 
-  const adminUrl = masterUrl.replace(`/${cfg.database}`, "/postgres");
+  const adminUrl = adminPostgresUrl(masterUrl);
   await ensureDatabaseExists(adminUrl, cfg.database);
 
   console.log("Pushing master schema (tenants table)...");
@@ -67,7 +40,7 @@ async function main(): Promise<void> {
       console.error("SEED_LOCAL_TENANT=true requires DATABASE_URL for tenant local credentials");
       process.exit(1);
     }
-    const tenantCfg = parseMasterUrl(databaseUrl);
+    const tenantCfg = parsePostgresUrl(databaseUrl);
     const { PrismaClient } = await import("@prisma/client-master");
     const master = new PrismaClient();
     await master.tenant.upsert({

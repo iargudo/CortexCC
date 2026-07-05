@@ -2,7 +2,7 @@
 
 export type ChannelType = "WHATSAPP" | "EMAIL" | "TEAMS" | "VOICE" | "WEBCHAT";
 export type ConversationStatus = "WAITING" | "ASSIGNED" | "ACTIVE" | "ON_HOLD" | "WRAP_UP" | "RESOLVED" | "ABANDONED" | "TRANSFERRED";
-export type AgentStatus = "ONLINE" | "AWAY" | "BUSY" | "OFFLINE" | "ON_BREAK";
+export type AgentStatus = "ONLINE" | "AWAY" | "BUSY" | "OFFLINE" | "ON_BREAK" | "FOLLOW_UP";
 export type SenderType = "CONTACT" | "AGENT" | "SYSTEM" | "BOT";
 export type RoutingStrategy = "ROUND_ROBIN" | "LEAST_BUSY" | "SKILL_BASED" | "PRIORITY_BASED" | "LONGEST_IDLE";
 

@@ -1,4 +1,4 @@
-import { Router, type Express } from "express";
+import { Router, type Express, type Request } from "express";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
 import rateLimit from "express-rate-limit";
@@ -23,6 +23,7 @@ import { ingestVoiceCallEvent, upsertVoiceCallRecord, normalizePhoneE164 } from 
 import { buildDialerRouter } from "./dialer.js";
 import { tenantMiddleware } from "../middleware/tenant.js";
 import { buildTenantsRouter } from "./tenants.js";
+import { buildPlatformRouter } from "./platform.js";
 import { userRoom, queueRoom, conversationRoom, supervisorRoom, tenantLiveRoom } from "../lib/socketRooms.js";
 import { getCurrentTenantKey } from "../lib/tenantContext.js";
 import {
@@ -38,6 +39,9 @@ import {
   rejectConversationCall,
 } from "../services/voice/voiceCallController.service.js";
 import { RoutingEngine } from "../routing/RoutingEngine.js";
+import { routeWaitingForUser } from "../routing/coordinationDispatcher.js";
+import { getSupervisionScope, scopeTeamIds } from "../lib/supervisionScope.js";
+import { defaultRolePermissions } from "../lib/permissions.js";
 import { enqueueRouting } from "../queue/bull.js";
 import { createAdapterForType } from "../channels/registry.js";
 import { getWhatsAppConfigValidationError } from "../channels/whatsapp/config.js";
@@ -105,7 +109,30 @@ function isSupervisor(user: Express.Request["authUser"]): boolean {
 
 function conversationViewer(req: Express.Request) {
   const u = req.authUser!;
-  return { userId: u.id, isSupervisor: isSupervisor(u) };
+  const scope = getSupervisionScope(u);
+  return { userId: u.id, isSupervisor: scope.isSupervisor, teamIds: scopeTeamIds(scope) };
+}
+
+/**
+ * Team filter for reports: a coordinator is limited to their teams; a global
+ * supervisor/admin may optionally filter by `?team_id`. Returns null = no filter.
+ */
+function reportTeamScope(req: Request): string[] | null {
+  const scope = getSupervisionScope(req.authUser);
+  if (scope.isSupervisor && !scope.global) return scope.teamIds;
+  const teamId = req.query.team_id ? String(req.query.team_id) : "";
+  return teamId ? [teamId] : null;
+}
+
+/** Blocks access to a queue that is outside a coordinator's team scope. */
+async function assertQueueInScope(req: Express.Request, queueId: string): Promise<void> {
+  const scope = getSupervisionScope(req.authUser);
+  if (!scope.isSupervisor || scope.global) return;
+  const q = await getPrisma().queue.findFirst({
+    where: { id: queueId, team_id: { in: scope.teamIds } },
+    select: { id: true },
+  });
+  if (!q) throw new HttpError(403, "Cola fuera del alcance de tu coordinación");
 }
 
 const limiter = rateLimit({ windowMs: 60_000, max: 300 });
@@ -141,6 +168,7 @@ export function buildApiRouter(app: Express): Router {
     })
   );
 
+  r.use("/platform", buildPlatformRouter());
   r.use(tenantMiddleware);
   r.use("/tenants", buildTenantsRouter());
 
@@ -319,6 +347,11 @@ export function buildApiRouter(app: Express): Router {
       getIo(app)
         ?.to(tenantLiveRoom(tenantKey))
         .emit("agent:status_changed", { userId: req.authUser!.id, status, tenantKey });
+      if (status === "ONLINE") {
+        void routeWaitingForUser(req.authUser!.id).catch((err) =>
+          console.error("[routing] routeWaitingForUser failed:", err)
+        );
+      }
       res.json(updated);
     })
   );
@@ -651,6 +684,17 @@ export function buildApiRouter(app: Express): Router {
   );
 
   r.get(
+    "/reports/funnel",
+    requireAuth,
+    requirePermission("reports"),
+    asyncHandler(async (req, res) => {
+      const from = new Date(String(req.query.date_from ?? Date.now()));
+      const to = new Date(String(req.query.date_to ?? Date.now()));
+      res.json(await reportService.funnelReport(from, to, reportTeamScope(req)));
+    })
+  );
+
+  r.get(
     "/reports/export",
     requireAuth,
     requirePermission("reports"),
@@ -658,7 +702,7 @@ export function buildApiRouter(app: Express): Router {
       const type = String(req.query.type ?? "volume");
       const from = new Date(String(req.query.date_from ?? Date.now()));
       const to = new Date(String(req.query.date_to ?? Date.now()));
-      const { filename, body } = await reportService.exportReportCsv(type, from, to);
+      const { filename, body } = await reportService.exportReportCsv(type, from, to, reportTeamScope(req));
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.send(body);
@@ -808,6 +852,7 @@ export function buildApiRouter(app: Express): Router {
       const status = req.query.status ? String(req.query.status) : undefined;
       const page = Number(req.query.page ?? 1);
       const limit = Number(req.query.limit ?? 20);
+      const scope = getSupervisionScope(req.authUser);
       const out = await conversationService.listConversations({
         userId: req.authUser!.id,
         tab,
@@ -815,7 +860,8 @@ export function buildApiRouter(app: Express): Router {
         status,
         page,
         limit,
-        isSupervisor: Boolean(isSupervisor(req.authUser)),
+        isSupervisor: scope.isSupervisor,
+        teamIds: scopeTeamIds(scope),
       });
       res.json(out);
     })
@@ -932,11 +978,13 @@ export function buildApiRouter(app: Express): Router {
         queue_id?: string;
         reason?: string;
       };
+      const transferScope = getSupervisionScope(req.authUser);
       const conv = await conversationService.transferConversation(
         id,
         body,
         req.authUser!.id,
-        isSupervisor(req.authUser)
+        transferScope.isSupervisor,
+        scopeTeamIds(transferScope)
       );
       if (body.target_id && (body.target_type === "agent" || body.target_type === "supervisor")) {
         const label =
@@ -1206,8 +1254,14 @@ export function buildApiRouter(app: Express): Router {
   r.get(
     "/agents",
     requireAuth,
-    asyncHandler(async (_req, res) => {
+    asyncHandler(async (req, res) => {
+      const scope = getSupervisionScope(req.authUser);
+      const teamFilter =
+        scope.isSupervisor && !scope.global
+          ? { teams: { some: { team_id: { in: scope.teamIds } } } }
+          : undefined;
       const users = await getPrisma().user.findMany({
+        where: teamFilter,
         include: {
           skills: { include: { skill: true } },
           teams: { include: { team: true } },
@@ -1296,8 +1350,11 @@ export function buildApiRouter(app: Express): Router {
   r.get(
     "/queues",
     requireAuth,
-    asyncHandler(async (_req, res) => {
+    asyncHandler(async (req, res) => {
+      const scope = getSupervisionScope(req.authUser);
+      const teamFilter = scope.isSupervisor && !scope.global ? { team_id: { in: scope.teamIds } } : undefined;
       const queues = await getPrisma().queue.findMany({
+        where: teamFilter,
         include: { team: true, _count: { select: { conversations: { where: { status: "WAITING" } } } } },
       });
       const queueIds = queues.map((q) => q.id);
@@ -1396,8 +1453,10 @@ export function buildApiRouter(app: Express): Router {
     "/queues/live",
     requireAuth,
     requirePermission("supervisor"),
-    asyncHandler(async (_req, res) => {
-      const queues = await getPrisma().queue.findMany();
+    asyncHandler(async (req, res) => {
+      const scope = getSupervisionScope(req.authUser);
+      const teamFilter = scope.isSupervisor && !scope.global ? { team_id: { in: scope.teamIds } } : undefined;
+      const queues = await getPrisma().queue.findMany({ where: teamFilter });
       res.json(queues);
     })
   );
@@ -1406,6 +1465,7 @@ export function buildApiRouter(app: Express): Router {
     "/queues/:id/waiting",
     requireAuth,
     asyncHandler(async (req, res) => {
+      await assertQueueInScope(req, routeParam(req, "id"));
       const rows = await getPrisma().conversation.findMany({
         where: { queue_id: routeParam(req, "id"), status: "WAITING" },
         include: {
@@ -1431,6 +1491,7 @@ export function buildApiRouter(app: Express): Router {
     "/queues/:id/active",
     requireAuth,
     asyncHandler(async (req, res) => {
+      await assertQueueInScope(req, routeParam(req, "id"));
       const rows = await getPrisma().conversation.findMany({
         where: {
           queue_id: routeParam(req, "id"),
@@ -1521,6 +1582,7 @@ export function buildApiRouter(app: Express): Router {
         res.json({ ok: true, mode: "queued" });
         return;
       }
+      const assignScope = getSupervisionScope(req.authUser);
       await conversationService.transferConversation(
         body.conversation_id,
         {
@@ -1530,7 +1592,8 @@ export function buildApiRouter(app: Express): Router {
           reason: body.reason,
         },
         req.authUser!.id,
-        isSupervisor(req.authUser)
+        assignScope.isSupervisor,
+        scopeTeamIds(assignScope)
       );
       const resolvedType = body.target_type === "ai" ? "agent" : body.target_type;
       if (
@@ -1864,6 +1927,13 @@ export function buildApiRouter(app: Express): Router {
         }
       }
 
+      // Preserva el rol (p. ej. coordinator) de los miembros que se mantienen.
+      const previous = await getPrisma().teamMember.findMany({
+        where: { team_id: teamId },
+        select: { user_id: true, role: true },
+      });
+      const previousRole = new Map(previous.map((m) => [m.user_id, m.role]));
+
       await getPrisma().$transaction(async (tx) => {
         await tx.teamMember.deleteMany({ where: { team_id: teamId } });
         if (uniqueIds.length > 0) {
@@ -1871,7 +1941,7 @@ export function buildApiRouter(app: Express): Router {
             data: uniqueIds.map((userId) => ({
               team_id: teamId,
               user_id: userId,
-              role: "member",
+              role: previousRole.get(userId) ?? "member",
             })),
           });
         }
@@ -1906,6 +1976,83 @@ export function buildApiRouter(app: Express): Router {
             status: m.user.status,
           },
         })),
+      });
+    })
+  );
+
+  // Nombra o quita a un miembro como coordinador del equipo. Ajusta de forma
+  // atómica el vínculo de equipo (TeamMember.role, define el alcance) y el rol
+  // RBAC 'coordinator' del usuario (define las capacidades de supervisión).
+  r.put(
+    "/settings/teams/:id/members/:userId/role",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const teamId = routeParam(req, "id");
+      const userId = routeParam(req, "userId");
+      const role = String(req.body?.role ?? "");
+      if (role !== "coordinator" && role !== "member") {
+        throw new HttpError(400, "role debe ser 'coordinator' o 'member'");
+      }
+      const existing = await getPrisma().teamMember.findUnique({
+        where: { team_id_user_id: { team_id: teamId, user_id: userId } },
+      });
+      if (!existing) throw new HttpError(404, "El usuario no es miembro de este equipo");
+
+      // Asegura que el rol RBAC 'coordinator' exista en este tenant.
+      let coordinatorRole = await getPrisma().role.findUnique({ where: { name: "coordinator" } });
+      if (!coordinatorRole) {
+        coordinatorRole = await getPrisma().role.create({
+          data: { name: "coordinator", permissions: defaultRolePermissions.coordinator ?? {} },
+        });
+      }
+
+      const updated = await getPrisma().$transaction(async (tx) => {
+        const member = await tx.teamMember.update({
+          where: { team_id_user_id: { team_id: teamId, user_id: userId } },
+          data: { role },
+          include: {
+            user: { select: { id: true, email: true, first_name: true, last_name: true, status: true } },
+          },
+        });
+
+        if (role === "coordinator") {
+          await tx.userRole.upsert({
+            where: { user_id_role_id: { user_id: userId, role_id: coordinatorRole!.id } },
+            create: { user_id: userId, role_id: coordinatorRole!.id },
+            update: {},
+          });
+        } else {
+          // Solo retira el rol RBAC si ya no coordina ningún otro equipo.
+          const stillCoordinates = await tx.teamMember.count({
+            where: { user_id: userId, role: "coordinator" },
+          });
+          if (stillCoordinates === 0) {
+            await tx.userRole.deleteMany({ where: { user_id: userId, role_id: coordinatorRole!.id } });
+            // Evita dejar al usuario sin ningún rol: asigna 'agent' como base.
+            const remaining = await tx.userRole.count({ where: { user_id: userId } });
+            if (remaining === 0) {
+              const agentRole = await tx.role.findUnique({ where: { name: "agent" } });
+              if (agentRole) {
+                await tx.userRole.create({ data: { user_id: userId, role_id: agentRole.id } });
+              }
+            }
+          }
+        }
+
+        return member;
+      });
+
+      res.json({
+        id: updated.id,
+        user_id: updated.user_id,
+        role: updated.role,
+        user: {
+          id: updated.user.id,
+          email: updated.user.email,
+          name: `${updated.user.first_name} ${updated.user.last_name}`.trim(),
+          status: updated.user.status,
+        },
       });
     })
   );
@@ -2329,11 +2476,13 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const { conversation_id, agent_id } = req.body as { conversation_id?: string; agent_id?: string };
       if (!conversation_id || !agent_id) throw new HttpError(400, "invalid body");
+      const forceScope = getSupervisionScope(req.authUser);
       await conversationService.transferConversation(
         conversation_id,
         { target_type: "agent", target_id: agent_id },
         req.authUser!.id,
-        true
+        forceScope.isSupervisor,
+        scopeTeamIds(forceScope)
       );
       const label =
         `${req.authUser!.first_name} ${req.authUser!.last_name}`.trim() || req.authUser!.email;
@@ -2350,8 +2499,8 @@ export function buildApiRouter(app: Express): Router {
     "/supervisor/live-board",
     requireAuth,
     requirePermission("supervisor"),
-    asyncHandler(async (_req, res) => {
-      res.json(await dashboardService.getDashboardStats());
+    asyncHandler(async (req, res) => {
+      res.json(await dashboardService.getDashboardStats(reportTeamScope(req)));
     })
   );
 

@@ -1,4 +1,0 @@
-# Copiar a deploy/azure/.azure-config tras az login
-AZURE_SUBSCRIPTION_ID="1ab46eb1-afb8-4c04-899f-019a515768cf"
-AZURE_SUBSCRIPTION_NAME="Azure subscription (TD Synnex local)"
-AZURE_TENANT_ID=

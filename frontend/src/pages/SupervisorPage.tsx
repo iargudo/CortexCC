@@ -40,7 +40,8 @@ type AgentRow = {
 
 export default function SupervisorPage() {
   const user = useAuthStore((s) => s.user);
-  const canAll = user?.role === "admin" || user?.role === "supervisor";
+  // Jefatura (admin/supervisor) y coordinadores; el backend acota por equipo al coordinador.
+  const canAll = user?.role === "admin" || Boolean(user?.permissions?.supervisor);
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignContact, setAssignContact] = useState("");

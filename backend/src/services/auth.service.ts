@@ -2,13 +2,20 @@ import type { AgentStatus, Prisma } from "@prisma/client";
 import { getPrisma } from "../lib/prisma.js";
 import { getCurrentTenantKey, getCurrentTenantName } from "../lib/tenantContext.js";
 import { hashPassword, verifyPassword } from "../lib/password.js";
-import { hashRefreshToken, signAccessToken, signRefreshToken, verifyAccessToken } from "../lib/jwt.js";
+import {
+  hashRefreshToken,
+  refreshTokenExpiresAt,
+  signAccessToken,
+  signRefreshToken,
+  verifyAccessToken,
+} from "../lib/jwt.js";
 import type { PermissionsMap } from "../lib/permissions.js";
 import { HttpError } from "../middleware/errorHandler.js";
 
-function primaryRole(roles: { name: string }[]): "admin" | "supervisor" | "agent" {
+function primaryRole(roles: { name: string }[]): "admin" | "supervisor" | "coordinator" | "agent" {
   if (roles.some((r) => r.name === "admin")) return "admin";
   if (roles.some((r) => r.name === "supervisor")) return "supervisor";
+  if (roles.some((r) => r.name === "coordinator")) return "coordinator";
   return "agent";
 }
 
@@ -69,14 +76,12 @@ export async function loginWithPassword(email: string, password: string) {
   const accessToken = signAccessToken({ sub: user.id, email: user.email, tenantKey });
   const refreshPlain = signRefreshToken();
   const refreshHash = hashRefreshToken(refreshPlain);
-  const expires = new Date();
-  expires.setDate(expires.getDate() + 30);
 
   await prisma.refreshToken.create({
     data: {
       user_id: user.id,
       token_hash: refreshHash,
-      expires_at: expires,
+      expires_at: refreshTokenExpiresAt(),
     },
   });
 
@@ -138,6 +143,9 @@ export async function changeProfile(
 }
 
 export async function setAgentStatus(userId: string, status: string) {
+  if (!AGENT_STATUSES.includes(status as AgentStatus)) {
+    throw new HttpError(400, "Invalid status");
+  }
   const user = await getPrisma().user.update({
     where: { id: userId },
     data: { status: status as never, status_since: new Date() },
@@ -146,7 +154,7 @@ export async function setAgentStatus(userId: string, status: string) {
   return toAuthUserResponse(user);
 }
 
-const AGENT_STATUSES: AgentStatus[] = ["ONLINE", "AWAY", "BUSY", "OFFLINE", "ON_BREAK"];
+const AGENT_STATUSES: AgentStatus[] = ["ONLINE", "AWAY", "BUSY", "OFFLINE", "ON_BREAK", "FOLLOW_UP"];
 
 export type AdminUpdateUserInput = {
   email?: string;

@@ -22,7 +22,7 @@ CortexCC es **multi-tenant database-per-tenant**: un despliegue atiende N empres
 1. **Frontend web** (`frontend/`): SPA React + TypeScript + Vite (puerto 8080).
 2. **Backend API** (`backend/`): Node.js + Express + Prisma + Socket.IO (puerto 3030).
 3. **Telefonía** (`deploy/asterisk/`): Asterisk en Docker con SIP UDP, WSS, ARI y RTP.
-4. **Despliegue AWS** (`deploy/aws/scripts/deploy-cortexcc-ec2.sh`): provisión EC2 vía AWS CLI.
+4. **Despliegue Azure** (`deploy/azure/`): App Service + ACR + Docker.
 
 > Los puertos `3030` (backend) y `8080` (frontend) están **fijados** y no deben cambiarse; el script de despliegue valida explícitamente esto.
 
@@ -157,22 +157,20 @@ Validado en `backend/src/config/env.ts`. Variables principales:
 | `MASTER_DATABASE_URL` | — | BD Master (tabla `tenants`) — obligatoria en runtime |
 | `DATABASE_URL` | — | BD tenant local — scripts CLI (`migrate:tenant`, `seed:tenant`) |
 | `REDIS_URL` | `redis://localhost:6379/2` | DB lógica `/2` |
-| `JWT_SECRET` | — | Mín 32 caracteres |
-| `JWT_REFRESH_SECRET` | — | Mín 32 caracteres |
+| `JWT_SECRET` | — | Mín 32 caracteres; access token |
 | `JWT_EXPIRES_IN` | `15m` | Access token |
-| `JWT_REFRESH_EXPIRES_IN` | `30d` | Refresh token |
+| `JWT_REFRESH_EXPIRES_IN` | `30d` | Vigencia refresh token en BD |
+| `PLATFORM_JWT_SECRET` | derivado de `JWT_SECRET` | Opcional; panel `/platform` |
 | `INTEGRATION_API_KEY` | — | Clave M2M para `x-api-key` |
 | `ENABLE_JOBS` | `true` | Activa workers en proceso API |
 | `QUEUE_CONCURRENCY` | `5` | Concurrencia BullMQ |
 | `SOCKETIO_PATH` | `/socket.io` | Path de Socket.IO |
 | `SOCKETIO_CORS_ORIGIN` | `CORS_ORIGIN` | CORS específico para WS |
-| `BUSINESS_TIMEZONE` | `America/Guayaquil` | Zona horaria de negocio |
-| `PRISMA_LOG_QUERIES` | `false` | Activa logs SQL para depuración |
-| `STORAGE_PROVIDER` | `local` | `local` o `azure` |
-| `AZURE_STORAGE_CONNECTION_STRING` | — | Solo si `azure` |
-| `CHANNEL_CONFIG_ENCRYPTION_KEY` | — | 32 hex bytes para cifrar configs sensibles |
-| `AGENTHUB_PUBLIC_URL` | `http://localhost:3100` | Backend de CortexAgentHub |
-| `CORTEX_CC_API_BASE_URL` | `http://localhost:3030` | Self-URL para integraciones |
+| `PRISMA_LOG_QUERIES` | `false` | Activa logs SQL para depuración (solo scripts/tenant dev) |
+| `STORAGE_PROVIDER` | `local` | `local`, `s3` o `azure` |
+| `STORAGE_LOCAL_DIR` | `uploads` | Directorio local de adjuntos |
+| `AZURE_STORAGE_CONNECTION_STRING` | — | Solo si `STORAGE_PROVIDER=azure` |
+| `AZURE_STORAGE_CONTAINER` | `attachments` | Contenedor Azure Blob |
 
 ### 3.4 Seguridad
 
@@ -486,6 +484,7 @@ Esquemas Prisma:
 ```bash
 npm run prisma:generate           # genera clientes tenant + master
 SEED_LOCAL_TENANT=true npm run setup:master   # primera vez: Master + tenant local
+npm run bootstrap:tenant          # solo deploy: primer tenant (TENANT_* en env)
 npm run migrate:tenant            # una BD tenant (TENANT_DB_* o DATABASE_URL)
 npm run migrate:all-tenants       # todos los tenants activos (antes de cada release)
 npm run seed:tenant               # datos demo en una BD tenant
@@ -494,7 +493,16 @@ npx prisma migrate dev            # desarrollo: nueva migración contra BD de pr
 
 La Master **no** recibe migraciones de negocio.
 
-Scripts utilitarios en `backend/scripts/`:
+Scripts en `backend/scripts/`:
+
+| Script | Archivo | Uso |
+|---|---|---|
+| `bootstrap:tenant` | `bootstrap-tenant-env.ts` | Primer tenant en deploy (env). Operación: panel `/platform`. |
+| `setup:master` | `setup-master.ts` | Bootstrap BD Master |
+| `migrate:tenant` | `migrate-tenant.ts` | Migraciones en una BD tenant |
+| `migrate:all-tenants` | `migrate-all-tenants.ts` | Migraciones en todos los tenants activos |
+
+Scripts utilitarios adicionales:
 
 - `db:clear-conversations`: limpia conversaciones para entorno de pruebas.
 - `db:normalize-contact-phones`: normaliza formato de teléfonos.
@@ -682,7 +690,8 @@ exten => 8001,1,Dial(PJSIP/8001,30)
 
 ## 11. Despliegue
 
-> **Guía completa para un cliente nuevo (infraestructura + UI + canales + voz):** [08-manual-configuracion-cliente-nuevo.md](./08-manual-configuracion-cliente-nuevo.md).
+> **Guía completa para un cliente nuevo (infraestructura + UI + canales + voz):** [08-manual-configuracion-cliente-nuevo.md](./08-manual-configuracion-cliente-nuevo.md).  
+> **Alta de tenant adicional:** panel `{frontend}/platform/tenants` o API `POST /api/platform/tenants`.
 
 ### 11.1 Local
 
@@ -730,21 +739,6 @@ Nota importante (red/audio):
 - En `deploy/asterisk/conf/pjsip.conf`, actualiza `external_signaling_address`, `external_media_address`, `media_address` y `local_net` para que coincidan con tu LAN/IP real; si no, puedes tener **audio de un solo lado** o SDP anunciando IPs incorrectas.
 - Para probar softphone desde otra PC en LAN, el frontend debe servirse por **HTTPS** en el puerto 8080 (Vite dev + certificados en `deploy/asterisk/keys/`). Con `http://192.168.x.x` el registro SIP puede funcionar pero las llamadas no (micrófono bloqueado).
 
-### 11.2 AWS EC2 (script automatizado)
-
-`deploy/aws/scripts/deploy-cortexcc-ec2.sh`:
-
-1. Carga variables de `deploy/aws/.env` y valida requeridos (region, AMI, repo, puertos, DB, Redis).
-2. Crea/reutiliza key pair.
-3. Crea security group con ingress para `22`, `3030`, `8080`.
-4. Lanza instancia EC2.
-5. Provisiona Node.js + PM2.
-6. Clona repo, hace build de backend y frontend, genera `.env` runtime.
-7. Levanta backend y frontend con PM2.
-8. **Valida que los puertos sigan siendo `3030` y `8080`** — el script aborta si se intentan cambiar.
-
-Runbook detallado en `deploy/cortexcc-aws-cli-runbook.md`.
-
 ### 11.3 Checklist de validación post-deploy
 
 **API:**
@@ -775,7 +769,7 @@ Runbook detallado en `deploy/cortexcc-aws-cli-runbook.md`.
 
 ## 12. Operación continua
 
-- **Rotación de secretos** periódica: `JWT_SECRET`, `JWT_REFRESH_SECRET`, `INTEGRATION_API_KEY`, `CHANNEL_CONFIG_ENCRYPTION_KEY`, credenciales de canales.
+- **Rotación de secretos** periódica: `JWT_SECRET`, `PLATFORM_JWT_SECRET` (si se usa distinto), `INTEGRATION_API_KEY`, credenciales de canales.
 - **Monitoreo**: CPU/memoria de backend y Asterisk; lag de cola BullMQ; conexiones Socket.IO; cola de workers.
 - **Backups**: snapshots de PostgreSQL y respaldo de configuraciones críticas.
 - **Trazabilidad**: revisar `audit_logs`, `quality_evaluations`, `voice_calls` y logs PM2.

@@ -1,4 +1,8 @@
-.env
-.azure-config
+azure.stg
+azure.prd
+config/cortexcc.stg
+config/cortexcc.prd
+config/asterisk.stg
+config/asterisk.prd
+asterisk/.ssh/
 *.pem
-.ssh/

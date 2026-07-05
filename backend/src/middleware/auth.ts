@@ -13,6 +13,8 @@ export interface AuthUserPayload {
   status: string;
   max_concurrent: number;
   roles: { name: string; permissions: unknown }[];
+  /** Teams where this user is a coordinator (scopes supervision to those teams). */
+  coordinatorTeamIds: string[];
 }
 
 declare global {
@@ -31,7 +33,10 @@ async function loadAuthUser(req: Request, token: string): Promise<boolean> {
   }
   const user = await getPrisma().user.findUnique({
     where: { id: payload.sub },
-    include: { roles: { include: { role: true } } },
+    include: {
+      roles: { include: { role: true } },
+      teams: { where: { role: "coordinator" }, select: { team_id: true } },
+    },
   });
   if (!user) {
     return false;
@@ -45,6 +50,7 @@ async function loadAuthUser(req: Request, token: string): Promise<boolean> {
     status: user.status,
     max_concurrent: user.max_concurrent,
     roles: user.roles.map((ur) => ({ name: ur.role.name, permissions: ur.role.permissions })),
+    coordinatorTeamIds: user.teams.map((t) => t.team_id),
   };
   return true;
 }

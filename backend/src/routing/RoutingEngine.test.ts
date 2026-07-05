@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rankAgentsByStrategy, type AgentScore } from "./RoutingEngine.js";
+import { conversionScore, rankAgentsByStrategy, type AgentScore } from "./RoutingEngine.js";
 
 function d(iso: string): Date {
   return new Date(iso);
@@ -98,5 +98,32 @@ describe("rankAgentsByStrategy", () => {
     ];
     const ranked = rankAgentsByStrategy(withNulls, "ROUND_ROBIN");
     expect(ranked[0].userId).toBe("n1");
+  });
+});
+
+describe("conversionScore", () => {
+  it("gives new agents a neutral non-zero score (Laplace smoothing)", () => {
+    expect(conversionScore(0, 0)).toBeCloseTo(0.5);
+  });
+
+  it("ranks a proven high converter above a low converter", () => {
+    const high = conversionScore(40, 50); // 41/52 ≈ 0.788
+    const low = conversionScore(5, 50); //  6/52 ≈ 0.115
+    expect(high).toBeGreaterThan(low);
+  });
+
+  it("does not let a tiny perfect sample dominate a large strong sample", () => {
+    const tinyPerfect = conversionScore(1, 1); // 2/3 ≈ 0.667
+    const largeStrong = conversionScore(80, 90); // 81/92 ≈ 0.880
+    expect(largeStrong).toBeGreaterThan(tinyPerfect);
+  });
+
+  it("feeds PRIORITY_BASED so higher conversion wins", () => {
+    const candidates: AgentScore[] = [
+      { ...agents[1], userId: "weak", priorityScore: conversionScore(2, 40), activeCount: 0, skillScore: 10 },
+      { ...agents[2], userId: "strong", priorityScore: conversionScore(30, 40), activeCount: 0, skillScore: 1 },
+    ];
+    const ranked = rankAgentsByStrategy(candidates, "PRIORITY_BASED");
+    expect(ranked[0].userId).toBe("strong");
   });
 });

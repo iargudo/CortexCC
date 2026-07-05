@@ -142,23 +142,40 @@ Variables **obligatorias** para un cliente nuevo:
 | `DATABASE_URL` | BD del tenant local (scripts): `postgresql://USER:PASS@HOST:5432/cortexcontact` |
 | `REDIS_URL` | URL de Redis (ej. `redis://host:6379/2`) |
 | `JWT_SECRET` | Mínimo 32 caracteres (generar aleatorio) |
-| `JWT_REFRESH_SECRET` | Mínimo 32 caracteres (distinto al anterior) |
+| `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | TTL access y refresh (ej. `15m`, `30d`) |
 | `CORS_ORIGIN` | URL del frontend (ej. `http://IP:8080`) |
 | `SOCKETIO_CORS_ORIGIN` | Igual que `CORS_ORIGIN` |
 | `INTEGRATION_API_KEY` | Clave para sistemas externos (`x-api-key`) |
-| `CHANNEL_CONFIG_ENCRYPTION_KEY` | 32 caracteres hex para cifrar credenciales de canales |
 | `ENABLE_JOBS` | `true` (workers de routing, email, outbound) |
-| `BUSINESS_TIMEZONE` | Zona del cliente (ej. `America/Guayaquil`) |
 
 ### 4.3 Bootstrap multi-tenant y migraciones
 
+**Primera instalación (tenant local de desarrollo):**
+
 ```bash
 npm run prisma:generate
-SEED_LOCAL_TENANT=true npm run setup:master   # crea Master + registra tenant (ajustar subdomain)
+SEED_LOCAL_TENANT=true npm run setup:master   # crea Master + registra tenant local
 npm run migrate:tenant                         # esquema en BD del tenant
+npm run seed:tenant                            # opcional: datos demo
 ```
 
-Para registrar el tenant en Master manualmente (producción), tras migrar su BD:
+**Tenant adicional (producción o staging):**
+
+Panel de plataforma: `{frontend}/platform/tenants` → «Nuevo tenant» (crea BD, migra esquema, admin y registro en Master).
+
+O API autenticada: `POST /api/platform/tenants` con body JSON (`key`, `name`, `admin_email`, `admin_password`, etc.).
+
+**Alternativa manual** (solo si no puedes usar el panel):
+
+```bash
+# 1. Crear BD vacía en PostgreSQL
+# 2. Migrar
+TENANT_DB_HOST=HOST TENANT_DB_USER=USER TENANT_DB_PASSWORD=PASS TENANT_DB_NAME=cortexcontact_clientea \
+  npm run migrate:tenant
+# 3. Seed opcional
+TENANT_DB_*=... npm run seed:tenant
+# 4. INSERT en Master (ver SQL abajo)
+```
 
 ```sql
 INSERT INTO tenants (id, tenant_key, display_name, subdomain, database_host, database_port,
@@ -171,12 +188,8 @@ VALUES (
 
 **Datos iniciales del tenant:**
 
-- **Opción A (producción):** crear admin vía API/SQL tras migrate.
-- **Opción B (demo/staging):**
-
-```bash
-npm run seed:tenant
-```
+- **Producción:** admin email/password en el formulario del panel `/platform`, o crear admin vía SQL tras migrate.
+- **Demo/staging:** activar «Seed demo» en el panel, o `npm run seed:tenant` manual.
 
 Usuarios del seed (cambiar contraseñas en producción):
 
@@ -347,32 +360,20 @@ En `deploy/asterisk/conf/ari.conf`:
 
 ## 7. Fase 5 — Despliegue en cloud (elegir una opción)
 
-### Opción A — AWS EC2 (script automatizado)
+### Opción A — Azure App Service + ACR
 
 ```bash
-cp deploy/aws/.env.example deploy/aws/.env
-# Completar: MASTER_DATABASE_URL, DATABASE_URL, REDIS_URL, GIT_URL, secretos JWT, etc.
-./deploy/aws/scripts/deploy-cortexcc-ec2.sh
+cp deploy/azure/config/cortexcc.stg.example deploy/azure/config/cortexcc.stg
+cp deploy/azure/config/asterisk.stg.example deploy/azure/config/asterisk.stg
+./deploy/azure/cortexcc/deploy-cortexcc.sh stg
 ```
 
-El script:
-
-- Crea EC2 + security group (puertos 22, 3030, 8080)
-- Clona el repo, build backend/frontend
-- Ejecuta `migrate:all-tenants` (y `setup:master` si `RUN_SETUP_MASTER=true`)
-- Arranca con PM2
-- Sustituye `REPLACE_PUBLIC_IP` en las URLs
-
-`RUN_PRISMA_SEED=true` solo en demo/staging.
-
-Ver detalle en [07-despliegue-operacion.md](./07-despliegue-operacion.md) y `deploy/cortexcc-aws-cli-runbook.md`.
-
-### Opción B — Azure App Service + ACR
+**Produccion:**
 
 ```bash
-cp deploy/azure/.env.example deploy/azure/.env
-# Completar: RESOURCE_GROUP, MASTER_DATABASE_URL, DATABASE_URL, nombres de Web Apps, etc.
-./deploy/azure/deploy-azure-prd-cortexcc.sh
+cp deploy/azure/config/cortexcc.prd.example deploy/azure/config/cortexcc.prd
+cp deploy/azure/config/asterisk.prd.example deploy/azure/config/asterisk.prd
+./deploy/azure/cortexcc/deploy-cortexcc.sh prd
 ```
 
 El script:
@@ -568,12 +569,9 @@ Configurar apps externas (CRM, ERP) con:
 
 ### 10.3 CortexAgentHub (si aplica)
 
-En `backend/.env`:
+La URL de este API **no** va en `backend/.env` de Cortex CC. Configúrala en el proyecto **CortexAgentHub** (variable `CORTEX_CC_API_BASE_URL`, ej. `https://api.tuempresa.com`) y usa en Cortex CC la misma `INTEGRATION_API_KEY` en el endpoint de escalamiento (`x-api-key`).
 
-```env
-AGENTHUB_PUBLIC_URL=https://agenthub.tuempresa.com
-CORTEX_CC_API_BASE_URL=https://api.tuempresa.com
-```
+La zona horaria de negocio se define por tenant en la BD (`queues.timezone`, etc.), no con una variable de entorno global.
 
 ---
 
@@ -611,7 +609,7 @@ CORTEX_CC_API_BASE_URL=https://api.tuempresa.com
 ### Seguridad (producción)
 
 - [ ] Cambiar contraseñas del seed
-- [ ] Rotar `JWT_SECRET`, `JWT_REFRESH_SECRET`, `INTEGRATION_API_KEY`
+- [ ] Rotar `JWT_SECRET`, `INTEGRATION_API_KEY`
 - [ ] Cambiar password ARI de Asterisk
 - [ ] Certificado TLS válido en WSS (no self-signed)
 - [ ] Restringir puerto ARI (8074 por defecto) solo a IP del backend
@@ -621,7 +619,17 @@ CORTEX_CC_API_BASE_URL=https://api.tuempresa.com
 
 ## 12. Alta de un tenant adicional (producción)
 
-Cuando agregas una **nueva empresa** a una plataforma ya desplegada:
+Cuando agregas una **nueva empresa** a una plataforma ya desplegada, usa el **panel de plataforma** en `{frontend}/platform/tenants`.
+
+### Opción A — Panel / API (recomendado)
+
+1. Login en `/platform/login` con usuario platform admin.
+2. «Nuevo tenant»: key, nombre, subdominio/dominio, admin del tenant (o seed demo en staging).
+3. El backend crea la BD, aplica migraciones y registra en Master.
+
+API equivalente: `POST /api/platform/tenants` (Bearer token de platform admin).
+
+### Opción B — Pasos manuales
 
 | Paso | Acción |
 |---|---|
@@ -632,7 +640,16 @@ Cuando agregas una **nueva empresa** a una plataforma ya desplegada:
 | 5 | DNS: apuntar hostname del cliente al despliegue frontend existente |
 | 6 | Verificar login vía URL del cliente |
 
-**Importante:** migrar la BD del tenant **antes** de registrarlo en Master. En cada release con cambio de esquema: `npm run migrate:all-tenants` antes del deploy.
+### Después del alta
+
+| Paso | Acción |
+|---|---|
+| 1 | DNS al frontend compartido |
+| 2 | `curl "<API>/tenants/resolve?host=<dominio-cliente>"` → `{ key, name }` |
+| 3 | Login del admin en la URL del cliente |
+| 4 | Configuración en Settings (equipos, colas, canales, voz) — secciones 6–10 de este manual |
+
+**Importante:** migrar la BD del tenant **antes** de registrarlo en Master (el panel/API lo garantiza). En cada release con cambio de esquema: `npm run migrate:all-tenants` antes del deploy.
 
 ---
 
@@ -663,7 +680,8 @@ Cuando agregas una **nueva empresa** a una plataforma ya desplegada:
 | WhatsApp no entra | Webhook mal configurado | URL: `/webhooks/<tenantKey>/whatsapp/<channelId>` |
 | Login 400 | Falta tenant | En dev localhost: `VITE_TENANT_KEY`; en LAN/prod: `custom_domain` + DNS |
 | IP LAN cambió / varios sitios desalineados | `.env`, BD, Asterisk con IPs distintas | `./scripts/set-lan-ip.sh` y reiniciar backend + frontend |
-| Dominio no configurado | Host no en Master | `./scripts/set-lan-ip.sh` o verificar `custom_domain` en `tenants` |
+| Dominio no configurado | Host no en Master | `./scripts/set-lan-ip.sh` o editar tenant en `/platform/tenants` |
+| Alta de tenant falla a mitad | BD creada pero no en Master | Corregir error y reintentar desde panel (o borrar BD huérfana y crear de nuevo) |
 | ARI desconectado | Firewall o credenciales | Abrir 8074, revisar `ari.conf` |
 
 ---
@@ -672,7 +690,7 @@ Cuando agregas una **nueva empresa** a una plataforma ya desplegada:
 
 - Despliegue técnico: [07-despliegue-operacion.md](./07-despliegue-operacion.md)
 - Telefonía: [05-telefonia-asterisk-softphone.md](./05-telefonia-asterisk-softphone.md)
-- AWS: `deploy/cortexcc-aws-cli-runbook.md`
 - Azure + Asterisk: `deploy/azure/asterisk/README.md`
 - Multi-tenant: [ESTANDAR_ARQUITECTURA_MULTITENANT.md](./ESTANDAR_ARQUITECTURA_MULTITENANT.md)
+- Alta de tenant: panel `/platform/tenants`
 - Funcional: [01-vision-funcional.md](./01-vision-funcional.md), [DOCUMENTACION_FUNCIONAL.md](./DOCUMENTACION_FUNCIONAL.md)

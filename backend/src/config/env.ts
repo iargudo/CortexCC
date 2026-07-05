@@ -9,7 +9,7 @@ const envSchema = z.object({
   MASTER_DATABASE_URL: z.string(),
   DATABASE_URL: z.string().optional(),
   JWT_SECRET: z.string().min(32),
-  JWT_REFRESH_SECRET: z.string().min(32),
+  PLATFORM_JWT_SECRET: z.string().min(32).optional(),
   JWT_EXPIRES_IN: z.string().default("15m"),
   JWT_REFRESH_EXPIRES_IN: z.string().default("30d"),
   REDIS_URL: z.string().default("redis://localhost:6379/2"),
@@ -21,7 +21,6 @@ const envSchema = z.object({
   SOCKETIO_PATH: z.string().default("/socket.io"),
   SOCKETIO_CORS_ORIGIN: z.string().optional(),
   INTEGRATION_API_KEY: z.string().min(8),
-  BUSINESS_TIMEZONE: z.string().default("America/Guayaquil"),
   STORAGE_PROVIDER: z.enum(["local", "s3", "azure"]).default("local"),
   STORAGE_LOCAL_DIR: z.string().default("uploads"),
   AWS_S3_BUCKET: z.string().optional(),
@@ -41,7 +40,7 @@ if (!parsed.success) {
   }
 }
 
-export const env = parsed.success
+const rawEnv = parsed.success
   ? parsed.data
   : {
       NODE_ENV: "test" as const,
@@ -52,7 +51,7 @@ export const env = parsed.success
         process.env.MASTER_DATABASE_URL ?? "postgresql://test:test@localhost:5432/cortexcc_master",
       DATABASE_URL: process.env.DATABASE_URL ?? "postgresql://test:test@localhost:5432/test",
       JWT_SECRET: "test-secret-32-chars-minimum-length!!",
-      JWT_REFRESH_SECRET: "test-refresh-secret-32-chars-minimum!!",
+      PLATFORM_JWT_SECRET: undefined as string | undefined,
       JWT_EXPIRES_IN: "15m",
       JWT_REFRESH_EXPIRES_IN: "30d",
       REDIS_URL: "redis://localhost:6379/15",
@@ -61,7 +60,6 @@ export const env = parsed.success
       SOCKETIO_PATH: "/socket.io",
       SOCKETIO_CORS_ORIGIN: undefined,
       INTEGRATION_API_KEY: "test-integration-key-123456",
-      BUSINESS_TIMEZONE: "America/Guayaquil",
       STORAGE_PROVIDER: "local" as const,
       STORAGE_LOCAL_DIR: "uploads",
       AWS_S3_BUCKET: undefined,
@@ -71,3 +69,8 @@ export const env = parsed.success
       AZURE_STORAGE_CONNECTION_STRING: undefined,
       AZURE_STORAGE_CONTAINER: "attachments",
     };
+
+export const env = {
+  ...rawEnv,
+  PLATFORM_JWT_SECRET: rawEnv.PLATFORM_JWT_SECRET ?? `${rawEnv.JWT_SECRET}-platform-admin`,
+};

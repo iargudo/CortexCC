@@ -1,0 +1,4 @@
+# Copiar a azure.stg y/o azure.prd tras az login (no commitear)
+AZURE_SUBSCRIPTION_ID=""
+AZURE_SUBSCRIPTION_NAME=""
+AZURE_TENANT_ID=

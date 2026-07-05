@@ -7,6 +7,9 @@ const TENANT_HEADER = "x-tenant-key";
 
 function isTenantExemptPath(req: Request): boolean {
   const path = req.path;
+  if (path.startsWith("/platform")) {
+    return true;
+  }
   if (req.method === "GET" && (path === "/health" || path === "/tenants/resolve")) {
     return true;
   }

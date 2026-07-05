@@ -3,17 +3,35 @@
 # Provisiona Asterisk (PBX) en Azure: RG dedicado + VM + Docker + integración CortexCC
 #
 # Requisitos: az CLI, docker (solo empaquetado local), ssh, scp, tar, openssl, curl, jq
-# Config: deploy/azure/.env (ver .env.example — sección Asterisk)
+# Config Asterisk: deploy/azure/config/asterisk.stg | asterisk.prd
+# Config CortexCC: deploy/azure/config/cortexcc.stg | cortexcc.prd
+# Azure: deploy/azure/azure.stg | azure.prd
 #
-# Uso:
-#   ./deploy/azure/deploy-azure-asterisk-vm.sh
+# Uso: ./deploy/azure/asterisk/deploy-asterisk-vm.sh [stg|prd]
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/.env}"
-CONFIG_FILE="$SCRIPT_DIR/.azure-config"
+AZURE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_DIR="$AZURE_DIR/config"
+ROOT_DIR="$(cd "$AZURE_DIR/../.." && pwd)"
+
+DEPLOY_TARGET="${DEPLOY_TARGET:-}"
+if [[ -z "$DEPLOY_TARGET" ]]; then
+  if [[ "${1:-}" =~ ^(stg|prd)$ ]]; then
+    DEPLOY_TARGET="$1"
+    shift
+  elif [[ -n "${1:-}" ]]; then
+    echo "Uso: $(basename "$0") [stg|prd]" >&2
+    exit 1
+  else
+    DEPLOY_TARGET=stg
+  fi
+fi
+
+ENV_FILE="${ENV_FILE:-$CONFIG_DIR/asterisk.$DEPLOY_TARGET}"
+CORTEXCC_ENV_FILE="${CORTEXCC_ENV_FILE:-$CONFIG_DIR/cortexcc.$DEPLOY_TARGET}"
+CONFIG_FILE="${CONFIG_FILE:-$AZURE_DIR/azure.$DEPLOY_TARGET}"
 ASTERISK_SRC_DIR="$ROOT_DIR/deploy/asterisk"
 SSH_DIR="$SCRIPT_DIR/.ssh"
 
@@ -63,22 +81,34 @@ resource_exists() {
 }
 
 load_env() {
-  if [[ ! -f "$ENV_FILE" ]]; then
-    log_err "No existe $ENV_FILE"
-    log_info "Copia deploy/azure/.env.example a deploy/azure/.env"
+  if [[ ! -f "$CORTEXCC_ENV_FILE" ]]; then
+    log_err "No existe $CORTEXCC_ENV_FILE"
+    log_info "Primero configura CortexCC del mismo ambiente:"
+    log_info "  cp deploy/azure/config/cortexcc.stg.example deploy/azure/config/cortexcc.stg"
     exit 1
   fi
+  if [[ ! -f "$ENV_FILE" ]]; then
+    log_err "No existe $ENV_FILE"
+    log_info "Staging:  cp deploy/azure/config/asterisk.stg.example deploy/azure/config/asterisk.stg"
+    log_info "Produccion: cp deploy/azure/config/asterisk.prd.example deploy/azure/config/asterisk.prd"
+    exit 1
+  fi
+
   set -a
+  # shellcheck disable=SC1090
+  source "$CORTEXCC_ENV_FILE"
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
 
-  local required=(
+  local cortexcc_required=(
     LOCATION
     RESOURCE_GROUP
     BACKEND_WEBAPP_NAME
     FRONTEND_WEBAPP_NAME
     API_PREFIX
+  )
+  local asterisk_required=(
     ASTERISK_RESOURCE_GROUP
     ASTERISK_VM_NAME
     ASTERISK_PUBLIC_IP_NAME
@@ -89,9 +119,15 @@ load_env() {
   )
 
   local v
-  for v in "${required[@]}"; do
+  for v in "${cortexcc_required[@]}"; do
     if [[ -z "${!v:-}" ]]; then
-      log_err "Falta variable requerida en .env: $v"
+      log_err "Falta variable CortexCC en $CORTEXCC_ENV_FILE: $v"
+      exit 1
+    fi
+  done
+  for v in "${asterisk_required[@]}"; do
+    if [[ -z "${!v:-}" ]]; then
+      log_err "Falta variable Asterisk en $ENV_FILE: $v"
       exit 1
     fi
   done
@@ -152,7 +188,9 @@ ensure_azure_session() {
     if [[ -n "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
       az account set --subscription "$AZURE_SUBSCRIPTION_ID" >/dev/null
     fi
-    log_ok "Contexto Azure cargado desde .azure-config"
+    log_ok "Contexto Azure cargado desde $CONFIG_FILE"
+  else
+    log_warn "No existe $CONFIG_FILE; se usa la suscripcion activa de az login"
   fi
 }
 
@@ -614,6 +652,11 @@ main() {
 
   echo "========================================"
   echo " CortexCC — Azure Asterisk VM Deploy"
+  echo "========================================"
+  echo " Entorno: $DEPLOY_TARGET"
+  echo " Asterisk: $ENV_FILE"
+  echo " CortexCC: $CORTEXCC_ENV_FILE"
+  echo " Azure:    $CONFIG_FILE"
   echo "========================================"
   echo ""
 

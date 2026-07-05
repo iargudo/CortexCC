@@ -7,13 +7,12 @@
 - Backend API (`backend/`)
 - Frontend web (`frontend/`)
 - Asterisk en Docker (`deploy/asterisk/`)
-- Script de provision/deploy AWS CLI (`deploy/aws/scripts/deploy-cortexcc-ec2.sh`)
-- Script de deploy Azure App Service + ACR (`deploy/azure/deploy-azure-prd-cortexcc.sh`)
+- Scripts de deploy Azure (`deploy/azure/cortexcc/`, `deploy/azure/asterisk/`)
 
 ## Entornos esperados
 
 - **Local desarrollo**: backend + frontend + servicios (Postgres/Redis) + Asterisk opcional.
-- **Servidor cloud**: backend/frontend en EC2, Asterisk en host dedicado o stack separado.
+- **Servidor cloud**: backend/frontend en Azure App Service (o stack cloud equivalente), Asterisk en host dedicado o stack separado.
 
 ## Puertos operativos del proyecto
 
@@ -43,13 +42,15 @@
 
 En produccion **no** definir `VITE_TENANT_KEY`; el tenant se resuelve por hostname.
 
-### Scripts de migracion
+### Scripts de migracion y alta de tenants
 
 ```bash
 # Primera vez: crear Master y registrar tenant local
 SEED_LOCAL_TENANT=true npm run setup:master
 
-# Migrar una BD tenant
+# Alta de un tenant nuevo — panel /platform o API POST /api/platform/tenants
+
+# Migrar una BD tenant (bajo nivel)
 npm run migrate:tenant
 
 # Migrar todos los tenants activos (antes de cada release)
@@ -127,45 +128,18 @@ Pasos:
    - `docker compose -f deploy/asterisk/docker-compose.asterisk.yml --env-file deploy/asterisk/.env up -d`
 4. Validar healthcheck y registros SIP.
 
-## AWS CLI (script automatizado CortexCC)
-
-Script:
-
-- `deploy/aws/scripts/deploy-cortexcc-ec2.sh`
-
-Comportamiento:
-
-1. Carga variables desde `deploy/aws/.env`.
-2. Valida requeridos (region, AMI, repo, puertos, DB/Redis, etc).
-3. Crea/par utiliza key pair.
-4. Crea security group con ingress para `22`, `3030`, `8080`.
-5. Lanza instancia EC2.
-6. Sustituye `REPLACE_PUBLIC_IP` / `PUBLIC_IP` en URLs (`CORS_ORIGIN`, `VITE_*`, etc.) con la IP publica real.
-7. Provisiona Node.js + PM2.
-8. Clona repo, build backend/frontend y crea `.env` runtime.
-9. Ejecuta `npm run prisma:generate` (tenant + master).
-10. Si `RUN_SETUP_MASTER=true`, ejecuta `SEED_LOCAL_TENANT=true npm run setup:master`.
-11. Ejecuta `npm run migrate:all-tenants` (no `db push` ni migrate contra una sola BD).
-12. Si `RUN_PRISMA_SEED=true`, ejecuta `npm run seed:tenant`.
-11. Ejecuta backend y frontend con PM2 y valida `GET /api/health`.
-
-Nota:
-
-- El script incluye una validacion para evitar cambiar puertos base del proyecto (`3030` backend y `8080` frontend).
-- `RUN_PRISMA_SEED` por defecto es `false`; activarlo solo en demo/staging.
-
 ## Azure App Service (Docker + ACR)
 
-Script:
-
-- `deploy/azure/deploy-azure-prd-cortexcc.sh`
+Script: `deploy/azure/cortexcc/deploy-cortexcc.sh [stg|prd]`
 
 Configuracion:
 
-1. `cp deploy/azure/.env.example deploy/azure/.env` (recursos Azure, `MASTER_DATABASE_URL`, `DATABASE_URL`, `REDIS_NAME`, secretos).
-2. Opcional: `cp deploy/azure/.azure-config.example deploy/azure/.azure-config` tras `az login`.
-3. Postgres existente en Azure (`DATABASE_URL`); Redis lo crea el script si `MANAGE_REDIS=true`.
-4. Ejecutar desde la raiz del repo: `./deploy/azure/deploy-azure-prd-cortexcc.sh`.
+1. `cp deploy/azure/azure.example deploy/azure/azure.stg` (o `azure.prd`) tras `az login`
+2. `cp deploy/azure/config/cortexcc.stg.example deploy/azure/config/cortexcc.stg`
+3. Produccion: `cp deploy/azure/config/cortexcc.prd.example deploy/azure/config/cortexcc.prd`
+4. Ejecutar: `./deploy/azure/cortexcc/deploy-cortexcc.sh stg` o `prd`
+
+Asterisk: `deploy/azure/asterisk/` — ver `deploy/azure/asterisk/README.md` y `deploy/azure/README.md`.
 
 Comportamiento:
 
@@ -180,7 +154,7 @@ Comportamiento:
 9. Frontend: un despliegue; registrar hostnames de cada tenant en DNS apuntando al mismo Web App (sin `VITE_TENANT_KEY` en build prod).
 9. Valida `GET {BACKEND_URL}/api/health`.
 
-Variables Redis en `deploy/azure/.env`:
+Variables Redis en `deploy/azure/config/cortexcc.stg` o `cortexcc.prd`:
 
 - `MANAGE_REDIS=true` (default): el script crea/usa el cache y rellena `REDIS_URL`.
 - `MANAGE_REDIS=false`: debes definir `REDIS_URL` manualmente.

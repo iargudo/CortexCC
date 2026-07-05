@@ -19,7 +19,8 @@ Variables claves validadas en `backend/src/config/env.ts`:
 - `DATABASE_URL` — opcional en runtime; usada por scripts CLI (`migrate:tenant`, `seed:tenant`) apuntando a una BD tenant
 - `REDIS_URL`
 - `JWT_SECRET`
-- `JWT_REFRESH_SECRET`
+- `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN`
+- `PLATFORM_JWT_SECRET` (opcional; panel `/platform`)
 - `INTEGRATION_API_KEY`
 - `ENABLE_JOBS`
 - `SOCKETIO_PATH`
@@ -33,6 +34,7 @@ Scripts npm:
 | Script | Uso |
 |---|---|
 | `npm run setup:master` | Crea BD Master + tabla `tenants` (`SEED_LOCAL_TENANT=true` registra tenant `local`) |
+| `npm run bootstrap:tenant` | Primer tenant en deploy (env `TENANT_*`). Operación: panel `/platform`. |
 | `npm run migrate:tenant` | `prisma migrate deploy` en una BD tenant (`TENANT_DB_*` o `DATABASE_URL`) |
 | `npm run migrate:all-tenants` | Migra todas las BDs de tenants activos en Master |
 | `npm run seed:tenant` | Seed de datos iniciales en una BD tenant |

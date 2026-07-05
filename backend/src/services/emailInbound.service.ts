@@ -1,5 +1,6 @@
 import { getPrisma } from "../lib/prisma.js";
 import { enqueueRouting } from "../queue/bull.js";
+import { resolveInboundQueueId } from "../routing/coordinationDispatcher.js";
 import { scheduleInitialSlaCheck } from "./slaCheck.service.js";
 
 const OPEN_STATUSES = ["WAITING", "ASSIGNED", "ACTIVE", "ON_HOLD", "WRAP_UP"] as const;
@@ -91,12 +92,12 @@ export async function ingestEmailIncoming(
 
   let createdConversation = false;
   if (!conversation) {
-    const defaultQueue = await getPrisma().queue.findFirst({ where: { is_active: true } });
+    const queueId = await resolveInboundQueueId(channelId);
     conversation = await getPrisma().conversation.create({
       data: {
         channel_id: channelId,
         contact_id: contact.id,
-        queue_id: defaultQueue?.id,
+        queue_id: queueId,
         status: "WAITING",
         source: "direct",
         subject: incoming.subject,

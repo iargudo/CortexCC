@@ -34,6 +34,17 @@ export const defaultRolePermissions: Record<string, PermissionsMap> = {
     contacts: true,
     settings: false,
   },
+  // Coordinador: capacidades de supervisión pero acotadas por equipo (ver
+  // supervisionScope) y sin acceso a Configuración global.
+  coordinator: {
+    inbox: true,
+    dashboard: true,
+    supervisor: true,
+    quality: true,
+    reports: true,
+    contacts: true,
+    settings: false,
+  },
   agent: {
     inbox: true,
     dashboard: true,

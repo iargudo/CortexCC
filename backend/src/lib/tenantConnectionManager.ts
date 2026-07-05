@@ -4,6 +4,7 @@ import { PrismaClient as TenantPrismaClient } from "@prisma/client";
 import { masterPrisma } from "./masterPrisma.js";
 import { getTenantContext } from "./tenantContext.js";
 import { HttpError } from "../middleware/errorHandler.js";
+import { isIpAddressHost, normalizeTenantHost } from "./postgresUtil.js";
 
 const tenantClients = new Map<string, PrismaClient>();
 const tenantInfoCache = new Map<string, { key: string; name: string }>();
@@ -95,7 +96,7 @@ export function getTenantInfo(tenantKey: string): { key: string; name: string } 
 
 function extractSubdomain(host: string): string | null {
   const normalized = host.toLowerCase().split(":")[0] ?? host;
-  if (normalized === "localhost" || normalized === "127.0.0.1") {
+  if (normalized === "localhost" || normalized === "127.0.0.1" || isIpAddressHost(normalized)) {
     return null;
   }
   const parts = normalized.split(".");
@@ -105,16 +106,30 @@ function extractSubdomain(host: string): string | null {
   return parts[0] ?? null;
 }
 
-export async function resolveByHost(host: string): Promise<{ key: string; name: string } | null> {
-  const normalized = host.toLowerCase().split(":")[0] ?? host;
+async function findTenantByCustomDomain(host: string): Promise<Tenant | null> {
+  const normalized = normalizeTenantHost(host);
+  if (!normalized) return null;
 
-  const byCustom = await masterPrisma.tenant.findFirst({
+  const direct = await masterPrisma.tenant.findFirst({
     where: { custom_domain: normalized, is_active: true },
   });
+  if (direct) return direct;
+
+  const candidates = await masterPrisma.tenant.findMany({
+    where: { is_active: true, custom_domain: { not: null } },
+  });
+  return (
+    candidates.find((t) => normalizeTenantHost(t.custom_domain) === normalized) ?? null
+  );
+}
+
+export async function resolveByHost(host: string): Promise<{ key: string; name: string } | null> {
+  const byCustom = await findTenantByCustomDomain(host);
   if (byCustom) {
     return { key: byCustom.tenant_key, name: byCustom.display_name };
   }
 
+  const normalized = host.toLowerCase().split(":")[0] ?? host;
   const subdomain = extractSubdomain(normalized);
   if (!subdomain) {
     return null;

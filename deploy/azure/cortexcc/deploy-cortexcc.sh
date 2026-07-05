@@ -164,10 +164,6 @@ load_env() {
       log_err "Con BOOTSTRAP_TENANT=true debes definir TENANT_KEY y TENANT_NAME en la config"
       exit 1
     fi
-    if [[ "$TENANT_SEED" != "true" && ( -z "${TENANT_ADMIN_EMAIL:-}" || -z "${TENANT_ADMIN_PASSWORD:-}" ) ]]; then
-      log_err "Con BOOTSTRAP_TENANT=true define TENANT_ADMIN_EMAIL + TENANT_ADMIN_PASSWORD, o TENANT_SEED=true"
-      exit 1
-    fi
     if [[ "$CORTEXCC_ENV" == "prd" && "$TENANT_SEED" == "true" ]]; then
       log_err "TENANT_SEED=true no permitido en produccion (CORTEXCC_ENV=prd)"
       exit 1
@@ -791,7 +787,6 @@ bootstrap_master_and_tenant() {
     log_info "Bootstrap tenant (${TENANT_KEY}) desde config de deploy..."
     export TENANT_KEY TENANT_NAME TENANT_SUBDOMAIN TENANT_CUSTOM_DOMAIN
     export TENANT_DB_NAME TENANT_SKIP_DB_CREATE TENANT_SEED
-    export TENANT_ADMIN_EMAIL TENANT_ADMIN_PASSWORD
     npm run bootstrap:tenant
     log_ok "Tenant registrado en Master: $TENANT_KEY"
     log_info "Dominio resolucion: ${TENANT_CUSTOM_DOMAIN:-$TENANT_SUBDOMAIN}"

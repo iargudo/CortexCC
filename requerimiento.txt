@@ -1,0 +1,25 @@
+Resumen de la Reunión Funcional: Proyecto Contact Center IA
+Fecha de la reunión: 1 de julio de 2026
+1.	Resumen General
+El objetivo principal del encuentro fue definir el proceso actual de gestión de prospectos (leads), aterrizar las expectativas para el flujo ideal del primer MVP (Producto Mínimo Viable) y establecer cómo se integrará la plataforma de Cortex Contact Center con la atención humana. Se acordó simplificar al máximo el primer MVP para acelerar la salida a producción debido a presiones de la gerencia. En lugar de un flujo complejo donde la IA interactúe extensamente con el cliente, el MVP consistirá en una interacción directa: el cliente hace clic en la pauta publicitaria y es derivado de inmediato a un asesor humano, quien gestionará la venta desde cero en la nueva herramienta. Paralelamente, se trabajará en un ambiente de pruebas para calibrar y afinar el agente de IA para una fase posterior.
+2.	Puntos Clave Tocados
+●	Dolores del Proceso Actual: Los datos de las pautas de redes sociales pasan por un integrador llamado Leadbox y luego a Sales (de Oracle). Este camino genera retrasos de entre 7 y 30 minutos, provocando la pérdida de clientes que ya están siendo atendidos por la competencia. Además, los ejecutivos atienden "a ciegas" porque no reciben el contexto de lo que el cliente habló inicialmente con la IA.
+●	Estrategia del Primer MVP: Sustituir el flujo largo para responder en menos de 1 o 2 minutos. La atención será 100% por mensajes (no llamadas/IVR). La carga de datos y el cierre de ventas en el CRM Sales de Oracle se realizará de manera manual por parte del asesor en esta primera etapa. El Contact Center registrará y medirá las métricas del embudo de conversión (ventas ganadas, estados, denegadas).
+●	Estructura y Reglas de Asignación de Chats: El equipo de Televentas está dividido en tres coordinaciones (mismo perfil/skill). Se aplicará una distribución equitativa (Round Robin) de forma cíclica (Coordinación 1, 2, 3 y vuelve a empezar). Si una coordinación está saturada, el chat queda encolado para ese equipo respetando el orden. Internamente, se priorizará la asignación a los asesores con mejores tasas de conversión (scoring de alto desempeño), siempre que estén disponibles.
+●	Permisos de Supervisión: Los coordinadores solo podrán ver y mover chats dentro de su propio equipo. El Supervisor/Jefatura general tendrá visibilidad total y podrá mover interacciones manualmente entre las tres coordinaciones en caso de saturación.
+●	Gestión de Números y Riesgo de Bloqueo (Spam): Se solicitó habilitar tres números en total (dos activos en simultáneo para diferentes páginas de pauta y un tercero de backup) debido a que han sufrido el baneo de 5 números en el año. Se verificó que el número actual está en calificación "High" (alta) y se confirmó que la herramienta Agent Hub puede soportar múltiples líneas sin problema.
+●	Trazabilidad de Campañas: Se conversó sobre la necesidad de saber si el lead
+
+proviene de Meta, Google Search o TikTok. Rafael propuso el uso de enlaces parametrizados con códigos informativos, aunque quedó en revisar con un especialista técnico la viabilidad dado que algunas plataformas usan extensiones de número directo en lugar de links.
+●	Nuevo Estado de Conexión (Fuera de Turno): Se planteó la necesidad de un estado de conectividad especial ("No disponible para nuevos chats, pero activo para seguimiento"). Esto permitirá a los asesores que ya terminaron su jornada continuar, desde sus casas, la negociación con clientes rezagados que prometieron enviar documentos tarde, evitando que les caigan nuevos casos y sin perjudicar a los agentes del turno nocturno.
+3.	Tareas Asignadas y Responsables
+
+Responsable	Tarea Asignada
+Rafael Arteaga	●	Consultar con Iván (Área Técnica) la factibilidad de identificar el origen exacto de los leads con un solo número.
+●	Consultar con Iván la viabilidad técnica del nuevo estado de conectividad solicitado para chats pendientes.
+●	Añadir las dos líneas telefónicas adicionales solicitadas para el respaldo y diversificación de páginas.
+●	Elaborar y enviar el Roadmap / Cronograma de Planificación detallado para el primer MVP (Fecha: Viernes 3 de julio de 2026 por la mañana).
+Cristina Gándara y Waldo Santana	●	Revisar la propuesta de planificación enviada por Rafael para coordinar sesiones de retroalimentación.
+●	Alistar internamente al equipo para realizar pruebas piloto rápidas a mediados de mes.
+Equipo Técnico / Desarrollo	●	Iniciar el ajuste y entrenamiento del agente de Inteligencia Artificial en paralelo en un entorno de test para solucionar los errores de bucles actuales (meta de 1.5 meses).
+

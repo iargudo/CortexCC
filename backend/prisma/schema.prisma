@@ -9,30 +9,32 @@ datasource db {
 }
 
 model User {
-  id             String   @id @default(uuid())
-  email          String   @unique
-  password_hash  String
-  first_name     String
-  last_name      String
-  avatar_url     String?
-  sip_extension  String?
-  sip_password   String?
-  status         AgentStatus @default(OFFLINE)
-  max_concurrent Int      @default(5)
-  status_since   DateTime @default(now())
-  skills         UserSkill[]
-  roles          UserRole[]
-  teams          TeamMember[]
-  assignments    ConversationAssignment[]
-  messages_sent  Message[] @relation("SentBy")
-  contact_notes  ContactNote[]
-  quality_evals  QualityEvaluation[] @relation("Evaluator")
-  refresh_tokens RefreshToken[]
-  quick_replies_owned QuickReply[] @relation("QuickReplyOwner")
-  voice_calls     VoiceCall[]
-  dialer_sessions DialerSession[]
-  created_at     DateTime @default(now())
-  updated_at     DateTime @updatedAt
+  id                  String                   @id @default(uuid())
+  email               String                   @unique
+  password_hash       String
+  first_name          String
+  last_name           String
+  avatar_url          String?
+  sip_extension       String?
+  sip_password        String?
+  status              AgentStatus              @default(OFFLINE)
+  max_concurrent      Int                      @default(5)
+  status_since        DateTime                 @default(now())
+  sales_won           Int                      @default(0)
+  sales_total         Int                      @default(0)
+  skills              UserSkill[]
+  roles               UserRole[]
+  teams               TeamMember[]
+  assignments         ConversationAssignment[]
+  messages_sent       Message[]                @relation("SentBy")
+  contact_notes       ContactNote[]
+  quality_evals       QualityEvaluation[]      @relation("Evaluator")
+  refresh_tokens      RefreshToken[]
+  quick_replies_owned QuickReply[]             @relation("QuickReplyOwner")
+  voice_calls         VoiceCall[]
+  dialer_sessions     DialerSession[]
+  created_at          DateTime                 @default(now())
+  updated_at          DateTime                 @updatedAt
 
   @@unique([sip_extension])
   @@map("users")
@@ -56,26 +58,27 @@ enum AgentStatus {
   BUSY
   OFFLINE
   ON_BREAK
+  FOLLOW_UP
 }
 
 model Skill {
-  id         String      @id @default(uuid())
-  name       String      @unique
+  id         String       @id @default(uuid())
+  name       String       @unique
   category   String
   users      UserSkill[]
   queues     QueueSkill[]
-  created_at DateTime    @default(now())
+  created_at DateTime     @default(now())
 
   @@map("skills")
 }
 
 model UserSkill {
-  id           String @id @default(uuid())
-  user_id      String
-  skill_id     String
-  proficiency  Int    @default(5)
-  user         User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  skill        Skill  @relation(fields: [skill_id], references: [id], onDelete: Cascade)
+  id          String @id @default(uuid())
+  user_id     String
+  skill_id    String
+  proficiency Int    @default(5)
+  user        User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  skill       Skill  @relation(fields: [skill_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, skill_id])
   @@map("user_skills")
@@ -125,18 +128,18 @@ model TeamMember {
 }
 
 model Channel {
-  id                    String         @id @default(uuid())
-  name                  String
-  type                  ChannelType
-  status                String         @default("active")
-  config                Json           @default("{}")
-  conversations_today_cache Int       @default(0)
-  conversations         Conversation[]
-  queues                QueueChannel[]
-  voice_calls           VoiceCall[]
-  dialer_campaigns      DialerCampaign[]
-  created_at            DateTime       @default(now())
-  updated_at            DateTime       @updatedAt
+  id                        String           @id @default(uuid())
+  name                      String
+  type                      ChannelType
+  status                    String           @default("active")
+  config                    Json             @default("{}")
+  conversations_today_cache Int              @default(0)
+  conversations             Conversation[]
+  queues                    QueueChannel[]
+  voice_calls               VoiceCall[]
+  dialer_campaigns          DialerCampaign[]
+  created_at                DateTime         @default(now())
+  updated_at                DateTime         @updatedAt
 
   @@map("channels")
 }
@@ -170,19 +173,19 @@ enum IntegrationBindingScopeType {
 }
 
 model IntegrationApp {
-  id              String               @id @default(uuid())
-  key             String               @unique
+  id              String                  @id @default(uuid())
+  key             String                  @unique
   name            String
-  icon            String               @default("Link")
-  mode            IntegrationAppMode   @default(SNAPSHOT)
-  auth_type       IntegrationAuthType  @default(NONE)
+  icon            String                  @default("Link")
+  mode            IntegrationAppMode      @default(SNAPSHOT)
+  auth_type       IntegrationAuthType     @default(NONE)
   base_url        String?
   credentials_ref String?
-  config          Json                 @default("{}")
-  is_active       Boolean              @default(true)
+  config          Json                    @default("{}")
+  is_active       Boolean                 @default(true)
   bindings        IntegrationAppBinding[]
-  created_at      DateTime             @default(now())
-  updated_at      DateTime             @updatedAt
+  created_at      DateTime                @default(now())
+  updated_at      DateTime                @updatedAt
 
   @@map("integration_apps")
 }
@@ -206,22 +209,22 @@ model IntegrationAppBinding {
 }
 
 model Contact {
-  id            String         @id @default(uuid())
-  external_id   String?
-  source_system String?
-  name          String?
-  email         String?
-  phone         String?
-  phone_wa      String?
-  teams_id      String?
-  metadata      Json?
-  conversations Conversation[]
-  tags          ContactTag[]
-  notes         ContactNote[]
-  voice_calls   VoiceCall[]
+  id              String                  @id @default(uuid())
+  external_id     String?
+  source_system   String?
+  name            String?
+  email           String?
+  phone           String?
+  phone_wa        String?
+  teams_id        String?
+  metadata        Json?
+  conversations   Conversation[]
+  tags            ContactTag[]
+  notes           ContactNote[]
+  voice_calls     VoiceCall[]
   dialer_contacts DialerCampaignContact[]
-  created_at    DateTime       @default(now())
-  updated_at    DateTime       @updatedAt
+  created_at      DateTime                @default(now())
+  updated_at      DateTime                @updatedAt
 
   @@index([phone])
   @@index([email])
@@ -263,44 +266,44 @@ model ContactNote {
 }
 
 model Conversation {
-  id                    String              @id @default(uuid())
-  channel_id            String
-  contact_id            String
-  queue_id              String?
-  status                ConversationStatus  @default(WAITING)
-  priority              Int                 @default(5)
-  subject               String?
-  source                String              @default("direct")
-  source_ref_id         String?
-  escalation_reason     String?
-  escalation_context    Json?
-  sla_policy_id         String?
-  sla_first_response_at DateTime?
-  sla_resolution_at     DateTime?
-  sla_breached          Boolean             @default(false)
-  wait_time_seconds     Int?
-  handle_time_seconds   Int?
+  id                     String                   @id @default(uuid())
+  channel_id             String
+  contact_id             String
+  queue_id               String?
+  status                 ConversationStatus       @default(WAITING)
+  priority               Int                      @default(5)
+  subject                String?
+  source                 String                   @default("direct")
+  source_ref_id          String?
+  escalation_reason      String?
+  escalation_context     Json?
+  sla_policy_id          String?
+  sla_first_response_at  DateTime?
+  sla_resolution_at      DateTime?
+  sla_breached           Boolean                  @default(false)
+  wait_time_seconds      Int?
+  handle_time_seconds    Int?
   first_response_seconds Int?
-  csat_score            Int?
-  csat_comment          String?
-  disposition_id        String?
-  wrap_up_notes         String?
-  unread_agent_count    Int                 @default(0)
-  last_message_preview  String?
-  last_message_at       DateTime?
-  channel               Channel             @relation(fields: [channel_id], references: [id])
-  contact               Contact             @relation(fields: [contact_id], references: [id])
-  queue                 Queue?              @relation(fields: [queue_id], references: [id])
-  disposition           Disposition?        @relation(fields: [disposition_id], references: [id])
-  sla_policy            SlaPolicy?          @relation(fields: [sla_policy_id], references: [id])
-  assignments           ConversationAssignment[]
-  messages              Message[]
-  transfers             Transfer[]
-  quality_evaluations   QualityEvaluation[]
-  voice_calls           VoiceCall[]
-  created_at            DateTime            @default(now())
-  updated_at            DateTime            @updatedAt
-  resolved_at           DateTime?
+  csat_score             Int?
+  csat_comment           String?
+  disposition_id         String?
+  wrap_up_notes          String?
+  unread_agent_count     Int                      @default(0)
+  last_message_preview   String?
+  last_message_at        DateTime?
+  channel                Channel                  @relation(fields: [channel_id], references: [id])
+  contact                Contact                  @relation(fields: [contact_id], references: [id])
+  queue                  Queue?                   @relation(fields: [queue_id], references: [id])
+  disposition            Disposition?             @relation(fields: [disposition_id], references: [id])
+  sla_policy             SlaPolicy?               @relation(fields: [sla_policy_id], references: [id])
+  assignments            ConversationAssignment[]
+  messages               Message[]
+  transfers              Transfer[]
+  quality_evaluations    QualityEvaluation[]
+  voice_calls            VoiceCall[]
+  created_at             DateTime                 @default(now())
+  updated_at             DateTime                 @updatedAt
+  resolved_at            DateTime?
 
   @@index([status, queue_id])
   @@index([contact_id])
@@ -328,47 +331,47 @@ enum TelephonyOutcome {
 }
 
 model ConversationAssignment {
-  id                  String            @id @default(uuid())
-  conversation_id     String
-  user_id             String
-  assigned_at         DateTime          @default(now())
-  accepted_at         DateTime?
-  ended_at            DateTime?
-  reason              String?
-  voice_call_id       String?
-  ring_started_at     DateTime?
+  id                    String            @id @default(uuid())
+  conversation_id       String
+  user_id               String
+  assigned_at           DateTime          @default(now())
+  accepted_at           DateTime?
+  ended_at              DateTime?
+  reason                String?
+  voice_call_id         String?
+  ring_started_at       DateTime?
   telephony_answered_at DateTime?
-  telephony_outcome   TelephonyOutcome?
-  conversation        Conversation      @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  user                User              @relation(fields: [user_id], references: [id])
-  voice_call          VoiceCall?          @relation(fields: [voice_call_id], references: [id], onDelete: SetNull)
+  telephony_outcome     TelephonyOutcome?
+  conversation          Conversation      @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  user                  User              @relation(fields: [user_id], references: [id])
+  voice_call            VoiceCall?        @relation(fields: [voice_call_id], references: [id], onDelete: SetNull)
 
   @@map("conversation_assignments")
 }
 
 model Message {
-  id                   String      @id @default(uuid())
-  conversation_id      String
-  sender_type          SenderType
-  sender_id            String?
-  content_type         ContentType @default(TEXT)
-  content              String
-  metadata             Json?
-  email_message_id     String?
-  email_in_reply_to    String?
-  email_subject        String?
-  email_cc             String?
-  email_bcc            String?
-  call_recording_url   String?
+  id                    String       @id @default(uuid())
+  conversation_id       String
+  sender_type           SenderType
+  sender_id             String?
+  content_type          ContentType  @default(TEXT)
+  content               String
+  metadata              Json?
+  email_message_id      String?
+  email_in_reply_to     String?
+  email_subject         String?
+  email_cc              String?
+  email_bcc             String?
+  call_recording_url    String?
   call_duration_seconds Int?
-  transcription        String?
-  delivery_status      String      @default("sent")
-  error_message        String?
-  is_internal          Boolean     @default(false)
-  conversation         Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  sender               User?        @relation("SentBy", fields: [sender_id], references: [id])
-  attachments          Attachment[]
-  created_at           DateTime    @default(now())
+  transcription         String?
+  delivery_status       String       @default("sent")
+  error_message         String?
+  is_internal           Boolean      @default(false)
+  conversation          Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  sender                User?        @relation("SentBy", fields: [sender_id], references: [id])
+  attachments           Attachment[]
+  created_at            DateTime     @default(now())
 
   @@index([conversation_id, created_at])
   @@map("messages")
@@ -406,30 +409,33 @@ model Attachment {
 }
 
 model Queue {
-  id                 String          @id @default(uuid())
-  name               String          @unique
-  description        String?
-  team_id            String?
-  priority           Int             @default(5)
-  routing_strategy   RoutingStrategy @default(ROUND_ROBIN)
-  max_wait_seconds   Int             @default(300)
-  overflow_queue_id  String?
-  overflow_message   String?
+  id                   String           @id @default(uuid())
+  name                 String           @unique
+  description          String?
+  team_id              String?
+  priority             Int              @default(5)
+  routing_strategy     RoutingStrategy  @default(ROUND_ROBIN)
+  max_wait_seconds     Int              @default(300)
+  rotation_group       String?
+  rotation_order       Int?
+  overflow_queue_id    String?
+  overflow_message     String?
   schedule             Json?
   out_of_hours_message String?
-  sla_policy_id      String?
-  is_active            Boolean         @default(true)
-  team                 Team?           @relation(fields: [team_id], references: [id])
-  overflow_queue       Queue?          @relation("Overflow", fields: [overflow_queue_id], references: [id])
-  overflow_targets     Queue[]         @relation("Overflow")
+  sla_policy_id        String?
+  is_active            Boolean          @default(true)
+  team                 Team?            @relation(fields: [team_id], references: [id])
+  overflow_queue       Queue?           @relation("Overflow", fields: [overflow_queue_id], references: [id])
+  overflow_targets     Queue[]          @relation("Overflow")
   channels             QueueChannel[]
   skills_required      QueueSkill[]
   conversations        Conversation[]
-  sla_policy           SlaPolicy?      @relation(fields: [sla_policy_id], references: [id])
+  sla_policy           SlaPolicy?       @relation(fields: [sla_policy_id], references: [id])
   dialer_campaigns     DialerCampaign[]
-  created_at           DateTime        @default(now())
-  updated_at           DateTime        @updatedAt
+  created_at           DateTime         @default(now())
+  updated_at           DateTime         @updatedAt
 
+  @@index([rotation_group, rotation_order])
   @@map("queues")
 }
 
@@ -453,13 +459,13 @@ model QueueChannel {
 }
 
 model QueueSkill {
-  id         String  @id @default(uuid())
-  queue_id   String
-  skill_id   String
-  min_level  Int     @default(1)
-  mandatory  Boolean @default(false)
-  queue      Queue   @relation(fields: [queue_id], references: [id], onDelete: Cascade)
-  skill      Skill   @relation(fields: [skill_id], references: [id], onDelete: Cascade)
+  id        String  @id @default(uuid())
+  queue_id  String
+  skill_id  String
+  min_level Int     @default(1)
+  mandatory Boolean @default(false)
+  queue     Queue   @relation(fields: [queue_id], references: [id], onDelete: Cascade)
+  skill     Skill   @relation(fields: [skill_id], references: [id], onDelete: Cascade)
 
   @@unique([queue_id, skill_id])
   @@map("queue_skills")
@@ -481,14 +487,14 @@ model Transfer {
 }
 
 model SlaPolicy {
-  id                     String   @id @default(uuid())
-  name                   String   @unique
+  id                     String         @id @default(uuid())
+  name                   String         @unique
   first_response_seconds Int
   resolution_seconds     Int
-  warning_threshold_pct  Int      @default(80)
+  warning_threshold_pct  Int            @default(80)
   queues                 Queue[]
   conversations          Conversation[]
-  created_at             DateTime @default(now())
+  created_at             DateTime       @default(now())
 
   @@map("sla_policies")
 }
@@ -499,6 +505,7 @@ model Disposition {
   category      String
   requires_note Boolean        @default(false)
   is_active     Boolean        @default(true)
+  is_conversion Boolean        @default(false)
   conversations Conversation[]
 
   @@map("dispositions")
@@ -519,11 +526,11 @@ model QuickReply {
 }
 
 model BusinessHours {
-  id        String @id @default(uuid())
-  name      String @unique
-  timezone  String @default("America/Guayaquil")
-  schedule  Json
-  holidays  Json?
+  id       String @id @default(uuid())
+  name     String @unique
+  timezone String @default("America/Guayaquil")
+  schedule Json
+  holidays Json?
 
   @@map("business_hours")
 }
@@ -542,54 +549,54 @@ model EmailTemplate {
 }
 
 model QualityEvaluation {
-  id               String   @id @default(uuid())
-  conversation_id  String
-  evaluator_id     String?
-  agent_display_name String
+  id                   String       @id @default(uuid())
+  conversation_id      String
+  evaluator_id         String?
+  agent_display_name   String
   contact_display_name String
-  channel          ChannelType
-  score            Float
-  saludo           Int
-  empatia          Int
-  resolucion       Int
-  cierre           Int
-  comment          String   @default("")
-  created_at       DateTime @default(now())
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  evaluator        User?    @relation("Evaluator", fields: [evaluator_id], references: [id])
+  channel              ChannelType
+  score                Float
+  saludo               Int
+  empatia              Int
+  resolucion           Int
+  cierre               Int
+  comment              String       @default("")
+  created_at           DateTime     @default(now())
+  conversation         Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  evaluator            User?        @relation("Evaluator", fields: [evaluator_id], references: [id])
 
   @@map("quality_evaluations")
 }
 
 model OrganizationSettings {
-  id            String @id @default("default")
-  company_name  String @default("Cortex Contact")
-  timezone      String @default("America/Guayaquil")
-  language      String @default("es")
-  pbx_host      String?
-  pbx_wss_port  Int    @default(8089)
-  pbx_ari_port  Int    @default(8074)
-  sip_server    String?
-  sip_realm     String?
-  sip_display_name String?
-  sip_stun_servers String[] @default(["stun:stun.l.google.com:19302"])
-  sip_turn_servers String[] @default([])
-  sip_ice_gathering_timeout Int @default(5000)
-  sip_extension_range_start Int @default(7001)
-  sip_extension_range_end   Int @default(7099)
-  default_country_code      String @default("EC")
-  updated_at    DateTime @updatedAt
+  id                        String   @id @default("default")
+  company_name              String   @default("Cortex Contact")
+  timezone                  String   @default("America/Guayaquil")
+  language                  String   @default("es")
+  pbx_host                  String?
+  pbx_wss_port              Int      @default(8089)
+  pbx_ari_port              Int      @default(8074)
+  sip_server                String?
+  sip_realm                 String?
+  sip_display_name          String?
+  sip_stun_servers          String[] @default(["stun:stun.l.google.com:19302"])
+  sip_turn_servers          String[] @default([])
+  sip_ice_gathering_timeout Int      @default(5000)
+  sip_extension_range_start Int      @default(7001)
+  sip_extension_range_end   Int      @default(7099)
+  default_country_code      String   @default("EC")
+  updated_at                DateTime @updatedAt
 
   @@map("organization_settings")
 }
 
 model AuditLog {
   id         String   @id @default(uuid())
-  actor_id  String?
-  action    String
-  entity    String
-  entity_id String?
-  metadata  Json?
+  actor_id   String?
+  action     String
+  entity     String
+  entity_id  String?
+  metadata   Json?
   created_at DateTime @default(now())
 
   @@index([created_at])
@@ -603,13 +610,13 @@ enum VoiceCallLegType {
 }
 
 model VoiceCall {
-  id                  String   @id @default(uuid())
+  id                  String                   @id @default(uuid())
   user_id             String?
   conversation_id     String?
   channel_id          String?
   contact_id          String?
   external_call_id    String
-  asterisk_channel_id String?  @unique
+  asterisk_channel_id String?                  @unique
   bridge_id           String?
   linkedid            String?
   remote_uri          String
@@ -620,12 +627,12 @@ model VoiceCall {
   ended_at            DateTime?
   duration_seconds    Int?
   metadata            Json?
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
-  user                User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
-  conversation        Conversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
-  channel             Channel? @relation(fields: [channel_id], references: [id], onDelete: SetNull)
-  contact             Contact? @relation(fields: [contact_id], references: [id], onDelete: SetNull)
+  created_at          DateTime                 @default(now())
+  updated_at          DateTime                 @updatedAt
+  user                User?                    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  conversation        Conversation?            @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
+  channel             Channel?                 @relation(fields: [channel_id], references: [id], onDelete: SetNull)
+  contact             Contact?                 @relation(fields: [contact_id], references: [id], onDelete: SetNull)
   legs                VoiceCallLeg[]
   assignments         ConversationAssignment[]
 
@@ -636,15 +643,15 @@ model VoiceCall {
 }
 
 model VoiceCallLeg {
-  id              String           @id @default(uuid())
-  voice_call_id   String
-  leg_type        VoiceCallLegType
-  channel_id      String?
-  endpoint        String?
-  state           String           @default("ringing")
-  created_at      DateTime         @default(now())
-  updated_at      DateTime         @updatedAt
-  voice_call      VoiceCall        @relation(fields: [voice_call_id], references: [id], onDelete: Cascade)
+  id            String           @id @default(uuid())
+  voice_call_id String
+  leg_type      VoiceCallLegType
+  channel_id    String?
+  endpoint      String?
+  state         String           @default("ringing")
+  created_at    DateTime         @default(now())
+  updated_at    DateTime         @updatedAt
+  voice_call    VoiceCall        @relation(fields: [voice_call_id], references: [id], onDelete: Cascade)
 
   @@index([voice_call_id])
   @@map("voice_call_legs")
@@ -674,44 +681,44 @@ enum DialerContactStatus {
 }
 
 model DialerCampaign {
-  id                String               @id @default(uuid())
-  name              String
-  channel_id        String
-  queue_id          String?
-  mode              DialerCampaignMode   @default(PREVIEW)
-  status            DialerCampaignStatus @default(DRAFT)
-  pacing_sec        Int                  @default(30)
-  max_attempts      Int                  @default(3)
-  caller_id         String?
-  schedule_json     Json?
-  predictive_ratio  Float                @default(1.2)
-  max_lines         Int                  @default(5)
-  abandon_rate_max  Float                @default(0.03)
-  require_agent_available Boolean        @default(true)
-  created_at        DateTime             @default(now())
-  updated_at        DateTime             @updatedAt
-  channel           Channel              @relation(fields: [channel_id], references: [id])
-  queue             Queue?               @relation(fields: [queue_id], references: [id], onDelete: SetNull)
-  contacts          DialerCampaignContact[]
-  sessions          DialerSession[]
+  id                      String                  @id @default(uuid())
+  name                    String
+  channel_id              String
+  queue_id                String?
+  mode                    DialerCampaignMode      @default(PREVIEW)
+  status                  DialerCampaignStatus    @default(DRAFT)
+  pacing_sec              Int                     @default(30)
+  max_attempts            Int                     @default(3)
+  caller_id               String?
+  schedule_json           Json?
+  predictive_ratio        Float                   @default(1.2)
+  max_lines               Int                     @default(5)
+  abandon_rate_max        Float                   @default(0.03)
+  require_agent_available Boolean                 @default(true)
+  created_at              DateTime                @default(now())
+  updated_at              DateTime                @updatedAt
+  channel                 Channel                 @relation(fields: [channel_id], references: [id])
+  queue                   Queue?                  @relation(fields: [queue_id], references: [id], onDelete: SetNull)
+  contacts                DialerCampaignContact[]
+  sessions                DialerSession[]
 
   @@map("dialer_campaigns")
 }
 
 model DialerCampaignContact {
-  id              String              @id @default(uuid())
-  campaign_id     String
-  contact_id      String?
-  phone           String
-  status          DialerContactStatus @default(PENDING)
-  attempts        Int                 @default(0)
+  id                  String              @id @default(uuid())
+  campaign_id         String
+  contact_id          String?
+  phone               String
+  status              DialerContactStatus @default(PENDING)
+  attempts            Int                 @default(0)
   last_disposition_id String?
-  next_call_at    DateTime?
-  metadata        Json?
-  created_at      DateTime            @default(now())
-  updated_at      DateTime            @updatedAt
-  campaign        DialerCampaign      @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
-  contact         Contact?            @relation(fields: [contact_id], references: [id], onDelete: SetNull)
+  next_call_at        DateTime?
+  metadata            Json?
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
+  campaign            DialerCampaign      @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  contact             Contact?            @relation(fields: [contact_id], references: [id], onDelete: SetNull)
 
   @@index([campaign_id, status])
   @@index([phone])
@@ -728,15 +735,15 @@ enum DialerSessionStatus {
 }
 
 model DialerSession {
-  id                  String              @id @default(uuid())
-  agent_user_id       String
-  campaign_id         String
-  status              DialerSessionStatus @default(IDLE)
-  current_contact_id  String?
-  started_at          DateTime            @default(now())
-  updated_at          DateTime            @updatedAt
-  agent               User                @relation(fields: [agent_user_id], references: [id], onDelete: Cascade)
-  campaign            DialerCampaign      @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  id                 String              @id @default(uuid())
+  agent_user_id      String
+  campaign_id        String
+  status             DialerSessionStatus @default(IDLE)
+  current_contact_id String?
+  started_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
+  agent              User                @relation(fields: [agent_user_id], references: [id], onDelete: Cascade)
+  campaign           DialerCampaign      @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
 
   @@unique([agent_user_id, campaign_id])
   @@map("dialer_sessions")

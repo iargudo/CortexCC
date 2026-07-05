@@ -7,7 +7,7 @@ El sistema se compone de cuatro bloques:
 1. **Frontend web** (`frontend/`): UI operativa para agentes/supervisores/admin.
 2. **Backend API** (`backend/`): dominio de negocio, persistencia, seguridad y realtime.
 3. **Telefonia Asterisk** (`deploy/asterisk/`): PBX SIP/WebRTC/ARI para voz.
-4. **Automatizacion de despliegue** (`deploy/aws/`, `deploy/azure/`): scripts para provision y deploy.
+4. **Automatizacion de despliegue** (`deploy/azure/`): scripts para provision y deploy.
 5. **Guia de onboarding** (`docs/08-manual-configuracion-cliente-nuevo.md`): configuracion completa de un cliente nuevo desde cero.
 
 ## Stack implementado
@@ -73,6 +73,7 @@ Reglas clave:
 - Login **sin selector de empresa**: el tenant se resuelve por hostname (prod) o `VITE_TENANT_KEY` (dev).
 - JWT incluye `tenantKey` y debe coincidir con el header en cada request autenticado.
 - Migraciones de negocio se aplican en **cada BD tenant** via `npm run migrate:all-tenants`.
+- Alta de tenant nuevo: panel `/platform/tenants` o API `/api/platform/tenants`.
 
 Referencia completa: [ESTANDAR_ARQUITECTURA_MULTITENANT.md](./ESTANDAR_ARQUITECTURA_MULTITENANT.md).
 

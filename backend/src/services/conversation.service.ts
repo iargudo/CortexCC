@@ -3,6 +3,7 @@ import { getPrisma } from "../lib/prisma.js";
 import { HttpError } from "../middleware/errorHandler.js";
 import { mapConversation, mapMessage, type ActiveAssigneeInfo } from "./conversationMapper.js";
 import { enqueueOutbound, enqueueRouting } from "../queue/bull.js";
+import { routeNextWaitingInQueue } from "../routing/coordinationDispatcher.js";
 import { scheduleInitialSlaCheck } from "./slaCheck.service.js";
 import { mapChannelType } from "../lib/channelTypes.js";
 import * as contactService from "./contact.service.js";
@@ -31,15 +32,27 @@ async function activeAssignee(conversationId: string): Promise<ActiveAssigneeInf
   };
 }
 
-/** Quien consulta o muta la conversación (inbox / API autenticada). */
-export type ConversationViewer = { userId: string; isSupervisor: boolean };
+/**
+ * Quien consulta o muta la conversación (inbox / API autenticada).
+ * `teamIds`: null/undefined = alcance global (admin o jefatura). Array = coordinador
+ * limitado a esos equipos.
+ */
+export type ConversationViewer = { userId: string; isSupervisor: boolean; teamIds?: string[] | null };
 
-/** Agente: cola (WAITING) o asignación activa propia. Supervisor/admin: todo. */
+/** Agente: cola (WAITING) o asignación activa propia. Supervisor/admin: todo (o su equipo si es coordinador). */
 export async function assertAgentCanAccessConversation(
   conversationId: string,
   viewer: ConversationViewer
 ): Promise<void> {
-  if (viewer.isSupervisor) return;
+  if (viewer.isSupervisor) {
+    if (viewer.teamIds == null) return; // jefatura / admin: acceso total
+    const inScope = await getPrisma().conversation.findFirst({
+      where: { id: conversationId, queue: { team_id: { in: viewer.teamIds } } },
+      select: { id: true },
+    });
+    if (!inScope) throw new HttpError(403, "Fuera del alcance de tu coordinación");
+    return;
+  }
   const ok = await getPrisma().conversation.findFirst({
     where: {
       id: conversationId,
@@ -83,8 +96,9 @@ export async function listConversations(params: {
   page: number;
   limit: number;
   isSupervisor: boolean;
+  teamIds?: string[] | null;
 }) {
-  const { userId, channel, status, page, limit, isSupervisor } = params;
+  const { userId, channel, status, page, limit, isSupervisor, teamIds } = params;
   let tab = params.tab ?? "mine";
   if (tab !== "mine" && tab !== "queue" && tab !== "all") tab = "mine";
   const skip = (page - 1) * limit;
@@ -101,14 +115,19 @@ export async function listConversations(params: {
     }
   }
 
+  // Coordinador (supervisor con alcance por equipo): limita a las colas de sus equipos.
+  const scoped = isSupervisor && teamIds != null;
+
   if (tab === "mine") {
     where.assignments = { some: { user_id: userId, ended_at: null } };
   } else if (tab === "queue") {
     where.status = "WAITING";
+    if (scoped) where.queue = { team_id: { in: teamIds } };
   } else if (tab === "all") {
     if (!isSupervisor) {
       throw new HttpError(403, "Forbidden");
     }
+    if (scoped) where.queue = { team_id: { in: teamIds } };
   }
 
   const [rows, total] = await Promise.all([
@@ -235,6 +254,17 @@ export async function resolveConversation(
   if (disposition.requires_note && !note) {
     throw new HttpError(400, "Note required");
   }
+
+  const conv = await getPrisma().conversation.findUnique({
+    where: { id: conversationId },
+    select: { queue_id: true },
+  });
+  const activeAssignments = await getPrisma().conversationAssignment.findMany({
+    where: { conversation_id: conversationId, ended_at: null },
+    select: { user_id: true },
+  });
+  const creditedUserIds = [...new Set(activeAssignments.map((a) => a.user_id))];
+
   await getPrisma().$transaction(async (tx) => {
     await tx.conversation.update({
       where: { id: conversationId },
@@ -249,7 +279,22 @@ export async function resolveConversation(
       where: { conversation_id: conversationId, ended_at: null },
       data: { ended_at: new Date() },
     });
+    if (creditedUserIds.length > 0) {
+      await tx.user.updateMany({
+        where: { id: { in: creditedUserIds } },
+        data: {
+          sales_total: { increment: 1 },
+          ...(disposition.is_conversion ? { sales_won: { increment: 1 } } : {}),
+        },
+      });
+    }
   });
+
+  // Agent freed capacity: pull the next waiting conversation in the same queue.
+  if (conv?.queue_id) {
+    await routeNextWaitingInQueue(conv.queue_id);
+  }
+
   return getConversationMapped(conversationId);
 }
 
@@ -262,10 +307,11 @@ export async function transferConversation(
     reason?: string;
   },
   fromUserId: string | undefined,
-  isSupervisor: boolean
+  isSupervisor: boolean,
+  teamIds?: string[] | null
 ) {
   if (!fromUserId) throw new HttpError(401, "Unauthorized");
-  await assertAgentCanAccessConversation(conversationId, { userId: fromUserId, isSupervisor });
+  await assertAgentCanAccessConversation(conversationId, { userId: fromUserId, isSupervisor, teamIds });
   const conv = await getPrisma().conversation.findUnique({ where: { id: conversationId } });
   if (!conv) throw new HttpError(404, "Not found");
 
@@ -275,6 +321,25 @@ export async function transferConversation(
     });
     if (!mine) {
       throw new HttpError(403, "No tienes una asignación activa en esta conversación.");
+    }
+  }
+
+  // Coordinador con alcance: el destino (cola o agente) debe pertenecer a su equipo.
+  const scoped = isSupervisor && teamIds != null;
+  if (scoped) {
+    if (body.queue_id) {
+      const q = await getPrisma().queue.findFirst({
+        where: { id: body.queue_id, team_id: { in: teamIds } },
+        select: { id: true },
+      });
+      if (!q) throw new HttpError(403, "La cola destino está fuera de tu coordinación");
+    }
+    if (body.target_id && (body.target_type === "agent" || body.target_type === "supervisor")) {
+      const member = await getPrisma().teamMember.findFirst({
+        where: { user_id: body.target_id, team_id: { in: teamIds } },
+        select: { id: true },
+      });
+      if (!member) throw new HttpError(403, "El agente destino está fuera de tu coordinación");
     }
   }
 

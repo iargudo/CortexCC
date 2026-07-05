@@ -9,7 +9,7 @@ log() {
 
 if [ -n "${MASTER_DATABASE_URL:-}" ]; then
   log "Running migrate-all-tenants..."
-  if ! npm run migrate:all-tenants 2>&1; then
+  if ! node dist/bootstrap/migrateAllTenants.js 2>&1; then
     log "ERROR: migrate-all-tenants failed."
     exit 1
   fi

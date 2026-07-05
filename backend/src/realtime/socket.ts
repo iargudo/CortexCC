@@ -39,8 +39,11 @@ export function initSocket(server: HttpServer) {
           include: { roles: { include: { role: true } } },
         });
         if (!user) return next(new Error("Unauthorized"));
+        // admin/supervisor (jefatura) y coordinator reciben eventos de supervisión;
+        // el alcance por equipo se aplica al refetch en cada endpoint.
         const isSupervisor = user.roles.some(
-          (ur) => ur.role.name === "admin" || ur.role.name === "supervisor"
+          (ur) =>
+            ur.role.name === "admin" || ur.role.name === "supervisor" || ur.role.name === "coordinator"
         );
         socket.data.userId = user.id;
         socket.data.tenantKey = tenantKey;

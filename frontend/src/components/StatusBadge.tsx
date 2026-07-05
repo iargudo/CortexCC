@@ -7,6 +7,7 @@ const agentStatusConfig: Record<AgentStatus, { label: string; dotClass: string }
   BUSY: { label: "Ocupado", dotClass: "bg-status-busy" },
   OFFLINE: { label: "Desconectado", dotClass: "bg-status-offline" },
   ON_BREAK: { label: "En descanso", dotClass: "bg-status-break" },
+  FOLLOW_UP: { label: "Solo seguimiento", dotClass: "bg-status-follow-up" },
 };
 
 export function AgentStatusDot({ status, className }: { status: AgentStatus; className?: string }) {

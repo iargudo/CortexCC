@@ -6,9 +6,17 @@ function startOfToday() {
   return d;
 }
 
-export async function getDashboardStats() {
+/**
+ * Live board stats. When `teamIds` is provided (coordinator scope), agents and
+ * conversations are limited to those teams; `null`/undefined = global (jefatura).
+ */
+export async function getDashboardStats(teamIds?: string[] | null) {
   const today = startOfToday();
   const since24h = new Date(Date.now() - 24 * 3600 * 1000);
+
+  const scoped = Array.isArray(teamIds);
+  const userWhere = scoped ? { teams: { some: { team_id: { in: teamIds } } } } : {};
+  const convScope = scoped ? { queue: { team_id: { in: teamIds } } } : {};
 
   const [
     agents_total,
@@ -19,16 +27,20 @@ export async function getDashboardStats() {
     convs24h,
     aiEscalations,
   ] = await Promise.all([
-    getPrisma().user.count(),
-    getPrisma().user.count({ where: { status: { in: ["ONLINE", "BUSY"] } } }),
-    getPrisma().conversation.count({ where: { status: "WAITING" } }),
-    getPrisma().conversation.count({ where: { status: { in: ["ACTIVE", "ASSIGNED", "ON_HOLD"] } } }),
-    getPrisma().conversation.count({ where: { status: "RESOLVED", resolved_at: { gte: today } } }),
+    getPrisma().user.count({ where: userWhere }),
+    getPrisma().user.count({ where: { ...userWhere, status: { in: ["ONLINE", "BUSY"] } } }),
+    getPrisma().conversation.count({ where: { ...convScope, status: "WAITING" } }),
+    getPrisma().conversation.count({
+      where: { ...convScope, status: { in: ["ACTIVE", "ASSIGNED", "ON_HOLD"] } },
+    }),
+    getPrisma().conversation.count({
+      where: { ...convScope, status: "RESOLVED", resolved_at: { gte: today } },
+    }),
     getPrisma().conversation.findMany({
-      where: { created_at: { gte: since24h } },
+      where: { ...convScope, created_at: { gte: since24h } },
       select: { channel_id: true, created_at: true },
     }),
-    getPrisma().conversation.count({ where: { source: { contains: "escalation" } } }),
+    getPrisma().conversation.count({ where: { ...convScope, source: { contains: "escalation" } } }),
   ]);
 
   const byHour: Record<string, number> = {};

@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { defaultRolePermissions } from "../src/lib/permissions.js";
+import { applyTenantBaseline } from "../src/bootstrap/tenantBaseline.js";
 
 function buildTenantDatabaseUrl(): string {
   const host = process.env.TENANT_DB_HOST?.trim();
@@ -24,44 +24,25 @@ const prisma = new PrismaClient({
 });
 
 async function main() {
-  await prisma.organizationSettings.upsert({
+  await applyTenantBaseline(prisma, {
+    companyName: "Cortex Contact",
+    timezone: "America/Guayaquil",
+  });
+
+  await prisma.organizationSettings.update({
     where: { id: "default" },
-    create: {
-      id: "default",
-      company_name: "Cortex Contact",
-      timezone: "America/Guayaquil",
-      language: "es",
+    data: {
       sip_server: "wss://localhost:8089/ws",
       sip_realm: "localhost",
       pbx_host: "localhost",
       pbx_wss_port: 8089,
       pbx_ari_port: 8074,
       sip_display_name: "Cortex Agent",
-      sip_extension_range_start: 7001,
-      sip_extension_range_end: 7099,
-    },
-    update: {
-      sip_server: "wss://localhost:8089/ws",
-      sip_realm: "localhost",
-      pbx_host: "localhost",
-      pbx_wss_port: 8089,
-      pbx_ari_port: 8074,
-      sip_extension_range_start: 7001,
-      sip_extension_range_end: 7099,
     },
   });
 
   const roles = await Promise.all(
-    ["admin", "supervisor", "agent"].map((name) =>
-      prisma.role.upsert({
-        where: { name },
-        create: {
-          name,
-          permissions: defaultRolePermissions[name] ?? {},
-        },
-        update: { permissions: defaultRolePermissions[name] ?? {} },
-      })
-    )
+    ["admin", "supervisor", "agent"].map((name) => prisma.role.findUniqueOrThrow({ where: { name } }))
   );
   const roleByName = Object.fromEntries(roles.map((r) => [r.name, r]));
 
@@ -322,7 +303,7 @@ async function main() {
     update: { is_visible: true, sort_order: 30 },
   });
 
-  console.log("Seed completed.");
+  console.log("Seed demo local completado (baseline + datos de laboratorio).");
 }
 
 main()

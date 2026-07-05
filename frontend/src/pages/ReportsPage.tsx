@@ -58,6 +58,14 @@ type ReportSummary = {
 
 type HourlyReport = { byHour: { hour: string; conversations: number }[] };
 type CsatReport = { byWeek: { week: string; label: string; avg_score: number; samples: number }[] };
+type FunnelReport = {
+  total_leads: number;
+  handled: number;
+  conversions: number;
+  conversion_rate: number;
+  by_category: { category: string; count: number }[];
+  by_disposition: { disposition: string; category: string; is_conversion: boolean; count: number }[];
+};
 
 const EXPORT_TYPES = [
   { value: "volume", label: "Volumen diario" },
@@ -66,6 +74,7 @@ const EXPORT_TYPES = [
   { value: "sla", label: "SLA por cola" },
   { value: "summary", label: "KPIs resumen" },
   { value: "csat", label: "CSAT semanal" },
+  { value: "funnel", label: "Embudo de conversión" },
 ] as const;
 
 export default function ReportsPage() {
@@ -99,6 +108,10 @@ export default function ReportsPage() {
   const csatQuery = useQuery({
     queryKey: ["reports", "csat", qs],
     queryFn: () => apiJson<CsatReport>(`/reports/csat?${qs}`),
+  });
+  const funnelQuery = useQuery({
+    queryKey: ["reports", "funnel", qs],
+    queryFn: () => apiJson<FunnelReport>(`/reports/funnel?${qs}`),
   });
 
   const dailyVolume = useMemo(() => {
@@ -151,7 +164,8 @@ export default function ReportsPage() {
     slaQuery.error ||
     summaryQuery.error ||
     hourlyQuery.error ||
-    csatQuery.error;
+    csatQuery.error ||
+    funnelQuery.error;
 
   const summary = summaryQuery.data;
   const csatWeeks = csatQuery.data?.byWeek ?? [];
@@ -286,6 +300,9 @@ export default function ReportsPage() {
           </TabsTrigger>
           <TabsTrigger value="csat" className="text-xs">
             CSAT
+          </TabsTrigger>
+          <TabsTrigger value="funnel" className="text-xs">
+            Embudo
           </TabsTrigger>
         </TabsList>
 
@@ -481,6 +498,71 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        <TabsContent value="funnel" className="mt-4 space-y-4">
+          {funnelQuery.isLoading && <p className="text-sm text-muted-foreground">Cargando…</p>}
+          {funnelQuery.data && (
+            <>
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { label: "Leads", value: funnelQuery.data.total_leads },
+                  { label: "Atendidas (cerradas)", value: funnelQuery.data.handled },
+                  { label: "Conversiones", value: funnelQuery.data.conversions },
+                  { label: "Tasa de conversión", value: `${funnelQuery.data.conversion_rate}%` },
+                ].map((c) => (
+                  <Card key={c.label} className="p-4">
+                    <p className="text-[11px] text-muted-foreground">{c.label}</p>
+                    <p className="text-2xl font-bold mt-1">{c.value}</p>
+                  </Card>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Resultados por categoría</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {funnelQuery.data.by_category.length === 0 && (
+                      <p className="text-sm text-muted-foreground">Sin conversaciones cerradas en el período.</p>
+                    )}
+                    {funnelQuery.data.by_category.length > 0 && (
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart data={funnelQuery.data.by_category} layout="vertical">
+                          <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                          <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
+                          <YAxis type="category" dataKey="category" tick={{ fontSize: 11 }} width={110} />
+                          <Tooltip contentStyle={{ fontSize: 11 }} />
+                          <Bar dataKey="count" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} name="Conversaciones" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Detalle por disposición</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 max-h-[300px] overflow-y-auto scrollbar-thin">
+                    {funnelQuery.data.by_disposition.map((d) => (
+                      <div key={d.disposition} className="flex items-center justify-between rounded-lg border p-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{d.disposition}</span>
+                          {d.is_conversion && (
+                            <Badge variant="default" className="text-[10px]">Conversión</Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[10px] text-muted-foreground">{d.category}</span>
+                          <span className="font-mono font-medium">{d.count}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              </div>
+            </>
+          )}
         </TabsContent>
       </Tabs>
     </div>

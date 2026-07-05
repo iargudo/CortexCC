@@ -30,7 +30,10 @@ type QueueRow = {
 };
 
 export default function QueuesLivePage() {
-  const canSupervisor = useAuthStore((s) => s.user?.role === "supervisor" || s.user?.role === "admin");
+  // Jefatura (admin/supervisor) y coordinadores; el backend acota las colas por equipo al coordinador.
+  const canSupervisor = useAuthStore(
+    (s) => s.user?.role === "admin" || Boolean(s.user?.permissions?.supervisor)
+  );
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignContact, setAssignContact] = useState("");
   const [assignConversationId, setAssignConversationId] = useState<string | null>(null);

@@ -10,7 +10,22 @@ function isLocalDevHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1";
 }
 
+/** Override desde panel platform: /login?tenant_key=...&tenant_name=... */
+export function readTenantFromQuery(): ResolvedTenant | null {
+  const params = new URLSearchParams(window.location.search);
+  const key = params.get("tenant_key")?.trim();
+  if (!key) return null;
+  const name = params.get("tenant_name")?.trim() || key;
+  return { key, name };
+}
+
 export async function resolveTenant(): Promise<ResolvedTenant> {
+  const fromQuery = readTenantFromQuery();
+  if (fromQuery) {
+    setTenant(fromQuery.key, fromQuery.name);
+    return fromQuery;
+  }
+
   const hostname = window.location.hostname;
 
   if (isLocalDevHost(hostname)) {

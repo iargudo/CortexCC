@@ -27,6 +27,11 @@ describe("defaultRolePermissions", () => {
     expect(defaultRolePermissions.agent.supervisor).toBe(false);
   });
 
+  it("coordinator supervises but has no settings access", () => {
+    expect(defaultRolePermissions.coordinator.supervisor).toBe(true);
+    expect(defaultRolePermissions.coordinator.settings).toBe(false);
+  });
+
   it("allows inbox for all operational roles", () => {
     expect(defaultRolePermissions.admin.inbox).toBe(true);
     expect(defaultRolePermissions.supervisor.inbox).toBe(true);
