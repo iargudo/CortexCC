@@ -80,7 +80,7 @@ Para probar desde **otra máquina en la red local** (no solo `localhost`):
 
 ### Script automático (recomendado)
 
-Desde la raíz del repo, con backend accesible en `:3030` y `psql` disponible:
+Desde la raíz del repo, con backend accesible en `:3037` y `psql` disponible:
 
 ```bash
 ./scripts/set-lan-ip.sh                  # detecta IP LAN (en0 / en1)
@@ -93,7 +93,7 @@ El script actualiza en un solo paso:
 
 | Destino | Qué escribe |
 |---------|-------------|
-| `frontend/.env` | `VITE_API_URL`, `VITE_WS_URL` → `https://<IP>:8080` |
+| `frontend/.env` | `VITE_API_URL`, `VITE_WS_URL` → `https://<IP>:8087` |
 | `backend/.env` | `CORS_ORIGIN`, `SOCKETIO_CORS_ORIGIN` |
 | Master DB | `tenants.custom_domain` |
 | Tenant DB | `organization_settings.pbx_host`, `sip_server`, `sip_realm` + `channels` VOICE `ariBaseUrl` |
@@ -102,7 +102,7 @@ El script actualiza en un solo paso:
 
 Después **reinicia backend y frontend** y pide a los agentes **cerrar sesión y volver a entrar** (recargan config del softphone).
 
-Accede siempre por **`https://<IP>:8080`** (no `http://`).
+Accede siempre por **`https://<IP>:8087`** (no `http://`).
 
 ### Configuración manual (referencia)
 
@@ -121,27 +121,27 @@ WHERE tenant_key = 'local';
 En `backend/.env`:
 
 ```env
-CORS_ORIGIN=https://192.168.x.x:8080
-SOCKETIO_CORS_ORIGIN=https://192.168.x.x:8080
+CORS_ORIGIN=https://192.168.x.x:8087
+SOCKETIO_CORS_ORIGIN=https://192.168.x.x:8087
 ```
 
 > `VITE_TENANT_KEY` solo aplica en `localhost` / `127.0.0.1`. Desde IP LAN el frontend resuelve el tenant con `GET /api/tenants/resolve?host=192.168.x.x`.
 
 #### 2. Frontend con HTTPS (obligatorio para llamadas WebRTC)
 
-El softphone necesita **micrófono** (`getUserMedia`). Los navegadores solo lo permiten en **contexto seguro**: `https://`, `http://localhost` o `http://127.0.0.1`. Si accedes por `http://192.168.x.x:8080`, el registro SIP puede funcionar pero **al marcar no pasa nada** (no llega INVITE a Asterisk).
+El softphone necesita **micrófono** (`getUserMedia`). Los navegadores solo lo permiten en **contexto seguro**: `https://`, `http://localhost` o `http://127.0.0.1`. Si accedes por `http://192.168.x.x:8087`, el registro SIP puede funcionar pero **al marcar no pasa nada** (no llega INVITE a Asterisk).
 
-En desarrollo, Vite sirve HTTPS en el puerto **8080** reutilizando los certificados de `deploy/asterisk/keys/` y hace proxy de `/api` y `/socket.io` al backend en `3030` (ver `frontend/vite.config.ts`).
+En desarrollo, Vite sirve HTTPS en el puerto **8087** reutilizando los certificados de `deploy/asterisk/keys/` y hace proxy de `/api` y `/socket.io` al backend en `3037` (ver `frontend/vite.config.ts`).
 
 En `frontend/.env` (ejemplo LAN):
 
 ```env
-VITE_API_URL=https://192.168.x.x:8080/api
-VITE_WS_URL=https://192.168.x.x:8080
+VITE_API_URL=https://192.168.x.x:8087/api
+VITE_WS_URL=https://192.168.x.x:8087
 VITE_SOCKET_PATH=/socket.io
 ```
 
-Accede siempre por **`https://192.168.x.x:8080`** (acepta el certificado self-signed en el navegador).
+Accede siempre por **`https://192.168.x.x:8087`** (acepta el certificado self-signed en el navegador).
 
 #### 3. Softphone y PBX (organización + Asterisk)
 
@@ -190,8 +190,8 @@ Abrir entrante hacia la máquina que corre Asterisk y el frontend:
 
 | Puerto | Protocolo | Uso |
 |--------|-----------|-----|
-| 8080 | TCP | Frontend (HTTPS en dev LAN) |
-| 3030 | TCP | Backend API (si no usas proxy Vite) |
+| 8087 | TCP | Frontend (HTTPS en dev LAN) |
+| 3037 | TCP | Backend API (si no usas proxy Vite) |
 | 8089 | TCP | WebRTC WSS (Asterisk) |
 | 10000–10100 | UDP | RTP (audio) |
 

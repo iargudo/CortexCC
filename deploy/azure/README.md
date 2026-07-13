@@ -37,4 +37,4 @@ Con `RUN_SETUP_PLATFORM_ADMIN=true` (activo por defecto si `RUN_SETUP_MASTER=tru
 
 Variables tenant: `TENANT_KEY`, `TENANT_NAME`, `TENANT_ADMIN_EMAIL`, `TENANT_ADMIN_PASSWORD` (o `TENANT_SEED=true` solo en stg). Si `DATABASE_URL` apunta a una BD existente, se usa como BD del tenant con `--skip-db-create`.
 
-Puertos fijos: backend `3030`, frontend `8080`.
+Puertos fijos: backend `3037`, frontend `8087`.

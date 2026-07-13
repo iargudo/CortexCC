@@ -18,7 +18,7 @@ FROM node:20-bookworm-slim AS runner
 
 WORKDIR /app
 
-ARG APP_PORT=3030
+ARG APP_PORT=3037
 ENV NODE_ENV=production
 ENV PORT=${APP_PORT}
 

@@ -16,8 +16,8 @@
 
 ## Puertos operativos del proyecto
 
-- Backend: `3030`
-- Frontend: `8080`
+- Backend: `3037`
+- Frontend: `8087`
 - SIP UDP Asterisk: `5060`
 - WSS SIP Asterisk: `8089`
 - ARI Asterisk: `8088` interno en contenedor; puerto publico `ASTERISK_ARI_PUBLIC_PORT` (por defecto `8074` en `deploy/asterisk/.env`)
@@ -103,15 +103,15 @@ Ver detalle en [05-telefonia-asterisk-softphone.md](./05-telefonia-asterisk-soft
 ./scripts/set-lan-ip.sh 192.168.x.x  # IP explícita
 ```
 
-Luego reinicia backend y frontend. Accede por **`https://<IP-LAN>:8080`** (HTTPS obligatorio para softphone WebRTC).
+Luego reinicia backend y frontend. Accede por **`https://<IP-LAN>:8087`** (HTTPS obligatorio para softphone WebRTC).
 
 Resumen manual si no usas el script:
 
 1. **Master DB:** `UPDATE tenants SET custom_domain = '<IP-LAN>' WHERE tenant_key = 'local';`
-2. **Backend:** `CORS_ORIGIN` y `SOCKETIO_CORS_ORIGIN` = `https://<IP-LAN>:8080`
-3. **Frontend:** `VITE_API_URL=https://<IP-LAN>:8080/api`, `VITE_WS_URL=https://<IP-LAN>:8080`
+2. **Backend:** `CORS_ORIGIN` y `SOCKETIO_CORS_ORIGIN` = `https://<IP-LAN>:8087`
+3. **Frontend:** `VITE_API_URL=https://<IP-LAN>:8087/api`, `VITE_WS_URL=https://<IP-LAN>:8087`
 4. **Telefonía PBX:** `pbx_host=<IP-LAN>`, puertos `8089` (WSS) y `8074` (ARI) — vía **Configuración → Telefonía** o `PUT /settings/telephony`; el script `set-lan-ip.sh` actualiza también `channels` VOICE
-5. **Asterisk:** `external_signaling_address` / `external_media_address` = IP LAN; firewall 8080, 8089, RTP.
+5. **Asterisk:** `external_signaling_address` / `external_media_address` = IP LAN; firewall 8087, 8089, RTP.
 
 > Sin HTTPS, el registro SIP puede funcionar pero las llamadas WebRTC fallan (el navegador bloquea el micrófono en `http://192.168.x.x`).
 
@@ -147,7 +147,7 @@ Comportamiento:
 2. Crea o reutiliza **Azure Cache for Redis** (`REDIS_NAME`) y genera `REDIS_URL` con SSL (`rediss://...:6380/DB`).
 3. Crea App Service Plan, dos Web Apps y ACR.
 4. Construye imagenes `backend/Dockerfile` y `frontend/Dockerfile` (linux/amd64) y las publica en ACR.
-5. Configura App Settings del backend (`MASTER_DATABASE_URL`, `DATABASE_URL`, `REDIS_URL`, JWT, `INTEGRATION_API_KEY`, puerto `3030`).
+5. Configura App Settings del backend (`MASTER_DATABASE_URL`, `DATABASE_URL`, `REDIS_URL`, JWT, `INTEGRATION_API_KEY`, puerto `3037`).
 6. Habilita WebSockets en el backend para Socket.IO.
 7. Build del frontend con `VITE_API_URL` / `VITE_WS_URL` apuntando al backend en Azure.
 8. Al arrancar el contenedor backend ejecuta `migrate:all-tenants` (entrypoint Docker; seed si `RUN_PRISMA_SEED=true`).
@@ -162,8 +162,8 @@ Variables Redis en `deploy/azure/config/cortexcc.stg` o `cortexcc.prd`:
 
 Puertos en Azure (contenedor):
 
-- Backend: `3030` (`WEBSITES_PORT=3030`)
-- Frontend: `8080` (`WEBSITES_PORT=8080`)
+- Backend: `3037` (`WEBSITES_PORT=3037`)
+- Frontend: `8087` (`WEBSITES_PORT=8087`)
 
 ## Checklist de validacion post despliegue
 

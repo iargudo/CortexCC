@@ -17,8 +17,8 @@ CortexCC es **multi-tenant database-per-tenant**: un despliegue de backend y fro
 | **PostgreSQL Master** | Registro de tenants (`cortexcc_master`) | 5432 |
 | **PostgreSQL tenant** | Una BD por empresa (esquema de negocio) | 5432 |
 | **Redis** | Colas BullMQ + tiempo real | 6379 |
-| **Backend** | API REST + Socket.IO + workers | **3030** |
-| **Frontend** | SPA React único; N dominios en prod | **8080** |
+| **Backend** | API REST + Socket.IO + workers | **3037** |
+| **Frontend** | SPA React único; N dominios en prod | **8087** |
 | **Asterisk** (opcional pero recomendado) | Telefonía SIP/WebRTC | SIP 5060, WSS 8089, ARI público 8074* |
 
 \* El puerto ARI público se configura con `ASTERISK_ARI_PUBLIC_PORT` en `deploy/asterisk/.env` (por defecto `8074`, mapeado al `8088` interno del contenedor).
@@ -35,8 +35,8 @@ flowchart LR
     VO[Voz SIP]
   end
   subgraph cortex [Un despliegue CortexCC]
-    FE[Frontend :8080]
-    BE[Backend :3030]
+    FE[Frontend :8087]
+    BE[Backend :3037]
     Master[(Master DB)]
     T1[(BD tenant A)]
     T2[(BD tenant B)]
@@ -81,8 +81,8 @@ flowchart LR
 
 | Puerto | Protocolo | Uso |
 |---|---|---|
-| 3030 | TCP | API backend |
-| 8080 | TCP | Frontend |
+| 3037 | TCP | API backend |
+| 8087 | TCP | Frontend |
 | 5060 | UDP | SIP |
 | 8089 | TCP | WebRTC (WSS) |
 | 8074 | TCP | ARI (restringir a IP del backend) |
@@ -143,7 +143,7 @@ Variables **obligatorias** para un cliente nuevo:
 | `REDIS_URL` | URL de Redis (ej. `redis://host:6379/2`) |
 | `JWT_SECRET` | Mínimo 32 caracteres (generar aleatorio) |
 | `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | TTL access y refresh (ej. `15m`, `30d`) |
-| `CORS_ORIGIN` | URL del frontend (ej. `http://IP:8080`) |
+| `CORS_ORIGIN` | URL del frontend (ej. `http://IP:8087`) |
 | `SOCKETIO_CORS_ORIGIN` | Igual que `CORS_ORIGIN` |
 | `INTEGRATION_API_KEY` | Clave para sistemas externos (`x-api-key`) |
 | `ENABLE_JOBS` | `true` (workers de routing, email, outbound) |
@@ -216,9 +216,9 @@ npm run worker
 ### 4.5 Validar
 
 ```bash
-curl http://localhost:3030/api/health
-curl "http://localhost:3030/api/tenants/resolve?host=cliente-a.tuplataforma.com"
-curl -X POST http://localhost:3030/api/auth/login \
+curl http://localhost:3037/api/health
+curl "http://localhost:3037/api/tenants/resolve?host=cliente-a.tuplataforma.com"
+curl -X POST http://localhost:3037/api/auth/login \
   -H "Content-Type: application/json" \
   -H "X-Tenant-Key: local" \
   -d '{"email":"admin@cortex.local","password":"demo1234"}'
@@ -245,8 +245,8 @@ Editar `frontend/.env`:
 **Desarrollo en la misma máquina (`localhost`):**
 
 ```env
-VITE_API_URL=http://localhost:3030/api
-VITE_WS_URL=http://localhost:3030
+VITE_API_URL=http://localhost:3037/api
+VITE_WS_URL=http://localhost:3037
 VITE_SOCKET_PATH=/socket.io
 VITE_TENANT_KEY=local
 VITE_TENANT_NAME=Desarrollo Local
@@ -261,8 +261,8 @@ VITE_TENANT_NAME=Desarrollo Local
 Equivalente manual en `frontend/.env` + `backend/.env` + BD + Asterisk (HTTPS obligatorio para softphone):
 
 ```env
-VITE_API_URL=https://<IP-LAN>:8080/api
-VITE_WS_URL=https://<IP-LAN>:8080
+VITE_API_URL=https://<IP-LAN>:8087/api
+VITE_WS_URL=https://<IP-LAN>:8087
 VITE_SOCKET_PATH=/socket.io
 ```
 
@@ -281,14 +281,14 @@ VITE_SOCKET_PATH=/socket.io
 ### 5.2 Arrancar
 
 ```bash
-npm run dev          # desarrollo (puerto 8080)
+npm run dev          # desarrollo (puerto 8087)
 # o producción:
 npm run build && npm run preview
 ```
 
 ### 5.3 Validar
 
-1. Abrir la URL del frontend (`http://localhost:8080` en la misma máquina, o `https://<IP-LAN>:8080` en LAN)
+1. Abrir la URL del frontend (`http://localhost:8087` en la misma máquina, o `https://<IP-LAN>:8087` en LAN)
 2. Login con el usuario admin
 3. Confirmar que no hay errores CORS en la consola del navegador
 
@@ -380,7 +380,7 @@ El script:
 
 - Crea Redis (si `MANAGE_REDIS=true`)
 - Construye imágenes Docker de backend y frontend
-- Despliega en App Service (puertos 3030 y 8080)
+- Despliega en App Service (puertos 3037 y 8087)
 - Habilita WebSockets para Socket.IO
 
 Asterisk en Azure: ver `deploy/azure/asterisk/README.md` (VM dedicada).
@@ -675,7 +675,7 @@ API equivalente: `POST /api/platform/tenants` (Bearer token de platform admin).
 | CORS en login | `CORS_ORIGIN` incorrecto | Igualar al URL exacto del frontend (incl. `https://` en LAN) |
 | Sin asignaciones | Redis caído o `ENABLE_JOBS=false` | Verificar Redis y workers |
 | Softphone no registra | Certificado WSS o credenciales | Aceptar cert en `https://<host>:8089` / revisar extensión |
-| Softphone conecta pero no llama | Frontend en HTTP por IP LAN | Usar `https://<IP-LAN>:8080`; el micrófono requiere contexto seguro |
+| Softphone conecta pero no llama | Frontend en HTTP por IP LAN | Usar `https://<IP-LAN>:8087`; el micrófono requiere contexto seguro |
 | Llamada sin audio | IPs en `pjsip.conf` | Poner IP LAN real + abrir RTP 10000–10100 |
 | WhatsApp no entra | Webhook mal configurado | URL: `/webhooks/<tenantKey>/whatsapp/<channelId>` |
 | Login 400 | Falta tenant | En dev localhost: `VITE_TENANT_KEY`; en LAN/prod: `custom_domain` + DNS |

@@ -8,9 +8,9 @@ Node.js 20 + Express + TypeScript + Prisma (PostgreSQL) + Redis + BullMQ + Socke
 
 All REST routes are served under the prefix configured in `API_PREFIX` (default **`/api`**).
 
-Example: `POST http://localhost:3030/api/auth/login` with header `X-Tenant-Key: local`
+Example: `POST http://localhost:3037/api/auth/login` with header `X-Tenant-Key: local`
 
-The SPA should set `VITE_API_URL=http://localhost:3030/api` (include `/api`).
+The SPA should set `VITE_API_URL=http://localhost:3037/api` (include `/api`).
 
 ## PostgreSQL y Redis en local
 
@@ -43,14 +43,14 @@ Si Redis o Postgres usan otro host/puerto, reflejalo en `.env` (sin cambiar el p
 
 | Variable | Purpose |
 |----------|---------|
-| `PORT` | HTTP port (default `3030`) |
+| `PORT` | HTTP port (default `3037`) |
 | `MASTER_DATABASE_URL` | PostgreSQL Master (tabla `tenants`) — **obligatoria** |
 | `DATABASE_URL` | BD tenant local — scripts CLI (`migrate:tenant`, `seed:tenant`) |
 | `TENANT_DB_*` | Alternativa a `DATABASE_URL` para scripts por tenant |
 | `REDIS_URL` | Redis for BullMQ and locks (local) |
 | `JWT_SECRET` | Min 32 characters; access token signing |
 | `JWT_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` | Access and refresh token TTL (e.g. `15m`, `30d`) |
-| `CORS_ORIGIN` | Browser origin for the frontend (e.g. `http://localhost:8080`) |
+| `CORS_ORIGIN` | Browser origin for the frontend (e.g. `http://localhost:8087`) |
 | `SOCKETIO_CORS_ORIGIN` | Optional; defaults to `CORS_ORIGIN` |
 | `INTEGRATION_API_KEY` | `x-api-key` for `/integrations/*` |
 | `ENABLE_JOBS` | Run BullMQ workers in the API process (`true`/`false`) |

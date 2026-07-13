@@ -535,7 +535,7 @@ interface EmailTemplate {
 
 **Implementación actual (multi-tenant):**
 - El tenant se resuelve **antes** del login (`TenantBootstrap`): por hostname en prod, `VITE_TENANT_KEY` en localhost, o `custom_domain` en Master si accedes por IP LAN.
-- **LAN + softphone:** usar `https://<IP>:8080` (Vite dev con TLS); ver `docs/05-telefonia-asterisk-softphone.md`.
+- **LAN + softphone:** usar `https://<IP>:8087` (Vite dev con TLS); ver `docs/05-telefonia-asterisk-softphone.md`.
 - Todas las peticiones API llevan header `X-Tenant-Key`.
 - Endpoint: `POST /auth/login` → `{ email, password }` + `X-Tenant-Key` → `{ token, refreshToken, user, tenantKey, tenantName }`
 - Endpoint: `POST /auth/logout`, `POST /auth/refresh` (refresh también requiere `X-Tenant-Key`)

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { AgentStatus } from "@/data/mock";
 import {
   ACCESS_TOKEN_KEY,
+  AUTH_EXPIRED_EVENT,
   REFRESH_TOKEN_KEY,
   apiJson,
   clearTokens,
@@ -106,3 +107,18 @@ export const useAuthStore = create<AuthState>((set) => ({
       user: state.user ? { ...state.user, ...data } : null,
     })),
 }));
+
+/**
+ * Si una petición autenticada recibe 401 y el token no se puede refrescar, la sesión se
+ * considera expirada: limpiamos el estado para que el router redirija al login en vez de
+ * dejar al usuario con peticiones fallando en bucle.
+ */
+if (typeof window !== "undefined") {
+  window.addEventListener(AUTH_EXPIRED_EVENT, () => {
+    const { isAuthenticated } = useAuthStore.getState();
+    if (!isAuthenticated) return;
+    clearTokens();
+    disconnectSocket();
+    useAuthStore.setState({ isAuthenticated: false, user: null, hydrated: true });
+  });
+}

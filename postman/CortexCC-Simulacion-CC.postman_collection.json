@@ -1,0 +1,788 @@
+{
+  "info": {
+    "_postman_id": "cortexcc-sim-cc-2026",
+    "name": "CortexCC — Simulación CC (Puntonet)",
+    "description": "Colección para lanzar simulaciones contra las APIs del Cortex Contact Center, orientada a los servicios configurados hoy en el tenant `local` (operación Puntonet).\n\n## Requisitos locales\n- Backend en `http://localhost:3037` (variable `baseUrl`).\n- Tenant `local` registrado en la BD Master.\n- Header `X-Tenant-Key: {{tenantKey}}` en todas las llamadas del API (excepto Health y Resolver tenant).\n- `INTEGRATION_API_KEY` del backend en la variable `integrationApiKey` (header `x-api-key`).\n\n## Servicios configurados actualmente (tenant local)\n- Canales WhatsApp 360Dialog: `puntonet-wa-pauta-a`, `puntonet-wa-pauta-b`, `puntonet-wa-backup`.\n- Canal Webchat: `puntonet-webchat`.\n- Colas: Ventas Coordinación 1 / 2 / 3.\n- Dispositions: Venta cerrada, Cotización enviada, etc.\n- Usuarios: `admin@puntonet.ec`, `ventas@puntonet.ec`, … (clave `PuntonetVentas2026!`).\n\n## Orden sugerido\n1. `01 — Setup y Auth` → Health, Login (guarda token).\n2. `02 — Catálogo configurado` → descubre y guarda IDs reales (canales, colas, dispositions, agentes).\n3. `03/04 — Simulación entrante` → WhatsApp webhook o Integración Escalate (crea conversaciones).\n4. `05/06 — Gestión y routing` → acepta, responde, transfiere, resuelve; dispara routing.\n5. `07 — Voz y Dialer` → llamadas salientes y campañas.\n6. `08 — Reportes` → KPIs y dashboard.\n\n## Nota sobre el webhook de WhatsApp\nEl webhook `03` solo crea conversación si el canal 360Dialog tiene `apiKey` válido en Configuración → Canales. Con `apiKey` vacío (estado por defecto del seed) el backend responde `202` pero descarta el mensaje. Para simular entrada de forma fiable usa `04 — Integración Escalate`, que no depende de la config del proveedor.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3037/api" },
+    { "key": "tenantKey", "value": "local" },
+    { "key": "resolveHost", "value": "local" },
+    { "key": "integrationApiKey", "value": "d45bfd427a43416f87eb0e629885d71b1617c23a41759fc155f05cb0523f5ae2" },
+    { "key": "adminEmail", "value": "admin@puntonet.ec" },
+    { "key": "adminPassword", "value": "PuntonetVentas2026!" },
+    { "key": "agentEmail", "value": "ventas@puntonet.ec" },
+    { "key": "agentPassword", "value": "PuntonetVentas2026!" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "whatsappChannelId", "value": "puntonet-wa-pauta-a" },
+    { "key": "webchatChannelId", "value": "puntonet-webchat" },
+    { "key": "queueId", "value": "" },
+    { "key": "dispositionId", "value": "" },
+    { "key": "agentId", "value": "" },
+    { "key": "lastConversationId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 — Setup y Auth",
+      "item": [
+        {
+          "name": "Health (sin tenant)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Resolver tenant por host",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tenants/resolve?host={{resolveHost}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["tenants", "resolve"],
+              "query": [{ "key": "host", "value": "{{resolveHost}}" }]
+            }
+          }
+        },
+        {
+          "name": "Login admin (guarda token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('login 200', () => pm.response.code === 200);",
+                  "if (pm.response.code === 200) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.token) { pm.collectionVariables.set('accessToken', data.token); pm.environment.set('accessToken', data.token); }",
+                  "  if (data.refreshToken) { pm.collectionVariables.set('refreshToken', data.refreshToken); pm.environment.set('refreshToken', data.refreshToken); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Login asesor (guarda token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('login 200', () => pm.response.code === 200);",
+                  "if (pm.response.code === 200) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.token) { pm.collectionVariables.set('accessToken', data.token); pm.environment.set('accessToken', data.token); }",
+                  "  if (data.refreshToken) { pm.collectionVariables.set('refreshToken', data.refreshToken); pm.environment.set('refreshToken', data.refreshToken); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{agentEmail}}\",\n  \"password\": \"{{agentPassword}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Auth me (perfil + roles)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const me = pm.response.json();",
+                  "  if (me.id) { pm.collectionVariables.set('agentId', me.id); pm.environment.set('agentId', me.id); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": { "raw": "{{baseUrl}}/auth/me", "host": ["{{baseUrl}}"], "path": ["auth", "me"] }
+          }
+        },
+        {
+          "name": "Poner agente ONLINE",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"ONLINE\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/status", "host": ["{{baseUrl}}"], "path": ["auth", "status"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 — Catálogo configurado (descubrir IDs)",
+      "item": [
+        {
+          "name": "Listar canales (guarda IDs)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const chs = pm.response.json();",
+                  "  const wa = chs.find(c => c.type === 'WHATSAPP' && c.status === 'active') || chs.find(c => c.type === 'WHATSAPP');",
+                  "  const web = chs.find(c => c.type === 'WEBCHAT');",
+                  "  if (wa) { pm.collectionVariables.set('whatsappChannelId', wa.id); pm.environment.set('whatsappChannelId', wa.id); }",
+                  "  if (web) { pm.collectionVariables.set('webchatChannelId', web.id); pm.environment.set('webchatChannelId', web.id); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": { "raw": "{{baseUrl}}/settings/channels", "host": ["{{baseUrl}}"], "path": ["settings", "channels"] }
+          }
+        },
+        {
+          "name": "Listar colas (guarda queueId)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const qs = pm.response.json();",
+                  "  if (qs.length) { pm.collectionVariables.set('queueId', qs[0].id); pm.environment.set('queueId', qs[0].id); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": { "raw": "{{baseUrl}}/queues", "host": ["{{baseUrl}}"], "path": ["queues"] }
+          }
+        },
+        {
+          "name": "Listar dispositions (guarda dispositionId)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const ds = pm.response.json();",
+                  "  if (ds.length) { pm.collectionVariables.set('dispositionId', ds[0].id); pm.environment.set('dispositionId', ds[0].id); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": { "raw": "{{baseUrl}}/settings/dispositions", "host": ["{{baseUrl}}"], "path": ["settings", "dispositions"] }
+          }
+        },
+        {
+          "name": "Listar agentes",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": { "raw": "{{baseUrl}}/agents", "host": ["{{baseUrl}}"], "path": ["agents"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 — Simulación entrante WhatsApp (360Dialog webhook)",
+      "item": [
+        {
+          "name": "Webhook WhatsApp — mensaje de texto",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const rnd = Math.floor(Math.random() * 9000 + 1000);",
+                  "pm.collectionVariables.set('simPhone', '5939' + Math.floor(10000000 + Math.random() * 89999999));",
+                  "pm.collectionVariables.set('simName', 'Cliente Sim ' + rnd);",
+                  "pm.collectionVariables.set('simWamid', 'wamid.' + (pm.variables.replaceIn('{{$guid}}')));",
+                  "const msgs = ['Hola, quiero información de planes de internet', 'Necesito soporte con mi servicio', 'Me interesa una cotización', 'Buenas, tengo una consulta comercial'];",
+                  "pm.collectionVariables.set('simMessage', msgs[Math.floor(Math.random() * msgs.length)]);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('webhook aceptado (202)', () => pm.response.code === 202);",
+                  "console.log('Simulado WhatsApp de', pm.collectionVariables.get('simPhone'), '-', pm.collectionVariables.get('simMessage'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"WABA_SIM\",\n      \"changes\": [\n        {\n          \"field\": \"messages\",\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": { \"display_phone_number\": \"593999999999\", \"phone_number_id\": \"SIM_PHONE_ID\" },\n            \"contacts\": [\n              { \"profile\": { \"name\": \"{{simName}}\" }, \"wa_id\": \"{{simPhone}}\" }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{simPhone}}\",\n                \"id\": \"{{simWamid}}\",\n                \"timestamp\": \"1700000000\",\n                \"type\": \"text\",\n                \"text\": { \"body\": \"{{simMessage}}\" }\n              }\n            ]\n          }\n        }\n      ]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/{{tenantKey}}/whatsapp/{{whatsappChannelId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "{{tenantKey}}", "whatsapp", "{{whatsappChannelId}}"]
+            },
+            "description": "Simula un mensaje entrante de WhatsApp con el formato del proveedor 360Dialog (Meta Cloud API). El backend responde 202 de inmediato y procesa en segundo plano.\n\n**Importante:** solo se crea la conversación si el canal 360Dialog tiene `apiKey` configurado. Con `apiKey` vacío el mensaje se descarta silenciosamente; en ese caso usa la carpeta `04 — Integración Escalate`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 — Simulación entrante (Integración / Escalate)",
+      "item": [
+        {
+          "name": "Escalate WhatsApp (x-api-key)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const rnd = Math.floor(Math.random() * 9000 + 1000);",
+                  "pm.collectionVariables.set('simPhone', '5939' + Math.floor(10000000 + Math.random() * 89999999));",
+                  "pm.collectionVariables.set('simName', 'Lead Sim ' + rnd);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('escalado creado (201)', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.conversation_id) { pm.collectionVariables.set('lastConversationId', data.conversation_id); pm.environment.set('lastConversationId', data.conversation_id); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{integrationApiKey}}" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_system\": \"postman_sim\",\n  \"channel_type\": \"WHATSAPP\",\n  \"event_type\": \"escalation\",\n  \"escalation_reason\": \"Cliente solicita asesor comercial\",\n  \"contact\": {\n    \"phone\": \"{{simPhone}}\",\n    \"name\": \"{{simName}}\"\n  },\n  \"context\": {\n    \"plan_interes\": \"Fibra 300MB\",\n    \"origen\": \"Campaña Pauta A\"\n  }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/integrations/escalate", "host": ["{{baseUrl}}"], "path": ["integrations", "escalate"] },
+            "description": "Crea una conversación WHATSAPP a partir de una escalación externa. No depende de la config del proveedor: resuelve el primer canal WHATSAPP existente. Guarda `lastConversationId`."
+          }
+        },
+        {
+          "name": "Escalate Webchat (x-api-key)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const rnd = Math.floor(Math.random() * 9000 + 1000);",
+                  "pm.collectionVariables.set('simExtId', 'web-' + rnd);",
+                  "pm.collectionVariables.set('simName', 'Visitante Web ' + rnd);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('escalado creado (201)', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.conversation_id) { pm.collectionVariables.set('lastConversationId', data.conversation_id); pm.environment.set('lastConversationId', data.conversation_id); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{integrationApiKey}}" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_system\": \"postman_sim\",\n  \"channel_type\": \"WEBCHAT\",\n  \"event_type\": \"chat_started\",\n  \"escalation_reason\": \"Consulta desde el sitio web\",\n  \"contact\": {\n    \"external_id\": \"{{simExtId}}\",\n    \"name\": \"{{simName}}\"\n  },\n  \"context\": {\n    \"pagina\": \"/planes-hogar\"\n  }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/integrations/escalate", "host": ["{{baseUrl}}"], "path": ["integrations", "escalate"] }
+          }
+        },
+        {
+          "name": "Escalate con cola preferida",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const rnd = Math.floor(Math.random() * 9000 + 1000);",
+                  "pm.collectionVariables.set('simPhone', '5939' + Math.floor(10000000 + Math.random() * 89999999));",
+                  "pm.collectionVariables.set('simName', 'Lead Prioritario ' + rnd);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('escalado creado (201)', () => pm.response.code === 201);",
+                  "if (pm.response.code === 201) {",
+                  "  const data = pm.response.json();",
+                  "  if (data.conversation_id) { pm.collectionVariables.set('lastConversationId', data.conversation_id); pm.environment.set('lastConversationId', data.conversation_id); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{integrationApiKey}}" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_system\": \"postman_sim\",\n  \"channel_type\": \"WHATSAPP\",\n  \"event_type\": \"escalation\",\n  \"escalation_reason\": \"Cliente VIP\",\n  \"priority\": 9,\n  \"preferred_queue\": \"{{queueId}}\",\n  \"contact\": {\n    \"phone\": \"{{simPhone}}\",\n    \"name\": \"{{simName}}\"\n  }\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/integrations/escalate", "host": ["{{baseUrl}}"], "path": ["integrations", "escalate"] },
+            "description": "Requiere haber corrido `02 — Listar colas` para poblar `queueId`."
+          }
+        },
+        {
+          "name": "Estado de integraciones (x-api-key)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "x-api-key", "value": "{{integrationApiKey}}" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/integrations/status", "host": ["{{baseUrl}}"], "path": ["integrations", "status"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 — Gestión de conversación",
+      "item": [
+        {
+          "name": "Listar conversaciones (sin asignar)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const out = pm.response.json();",
+                  "  const items = out.data || out.items || out;",
+                  "  if (Array.isArray(items) && items.length && items[0].id) {",
+                  "    pm.collectionVariables.set('lastConversationId', items[0].id); pm.environment.set('lastConversationId', items[0].id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/conversations?tab=unassigned&page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations"],
+              "query": [
+                { "key": "tab", "value": "unassigned" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Obtener conversación",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{lastConversationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{lastConversationId}}"]
+            }
+          }
+        },
+        {
+          "name": "Aceptar conversación",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{lastConversationId}}/accept",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{lastConversationId}}", "accept"]
+            }
+          }
+        },
+        {
+          "name": "Enviar mensaje (agente)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Hola, gracias por contactar a Puntonet. ¿En qué puedo ayudarle?\",\n  \"content_type\": \"TEXT\",\n  \"is_internal\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{lastConversationId}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{lastConversationId}}", "messages"]
+            }
+          }
+        },
+        {
+          "name": "Listar mensajes",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{lastConversationId}}/messages?page=1&limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{lastConversationId}}", "messages"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Transferir a cola",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"target_type\": \"queue\",\n  \"queue_id\": \"{{queueId}}\",\n  \"reason\": \"Derivación a cola de ventas\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{lastConversationId}}/transfer",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{lastConversationId}}", "transfer"]
+            }
+          }
+        },
+        {
+          "name": "Resolver conversación (disposition)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"disposition_id\": \"{{dispositionId}}\",\n  \"note\": \"Simulación completada desde Postman\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{lastConversationId}}/resolve",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{lastConversationId}}", "resolve"]
+            },
+            "description": "Requiere `dispositionId` (correr `02 — Listar dispositions`)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 — Routing y colas",
+      "item": [
+        {
+          "name": "Routing automático (encolar)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversation_id\": \"{{lastConversationId}}\",\n  \"target_type\": \"auto\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/routing/assign", "host": ["{{baseUrl}}"], "path": ["routing", "assign"] }
+          }
+        },
+        {
+          "name": "Recomendar agente",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/routing/recommend?conversation_id={{lastConversationId}}&strategy=LEAST_BUSY",
+              "host": ["{{baseUrl}}"],
+              "path": ["routing", "recommend"],
+              "query": [
+                { "key": "conversation_id", "value": "{{lastConversationId}}" },
+                { "key": "strategy", "value": "LEAST_BUSY" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cola — en espera",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/queues/{{queueId}}/waiting",
+              "host": ["{{baseUrl}}"],
+              "path": ["queues", "{{queueId}}", "waiting"]
+            }
+          }
+        },
+        {
+          "name": "Cola — activas",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/queues/{{queueId}}/active",
+              "host": ["{{baseUrl}}"],
+              "path": ["queues", "{{queueId}}", "active"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 — Voz y Dialer (saliente)",
+      "item": [
+        {
+          "name": "Originar llamada saliente",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('simPhone', '5939' + Math.floor(10000000 + Math.random() * 89999999));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{simPhone}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/voice/calls/originate", "host": ["{{baseUrl}}"], "path": ["voice", "calls", "originate"] },
+            "description": "Requiere un canal VOICE activo (Asterisk). El tenant local no tiene canal de voz configurado por defecto, por lo que puede devolver 400."
+          }
+        },
+        {
+          "name": "Registrar log de llamada (softphone)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('simCallId', 'sim-call-' + Date.now());",
+                  "pm.collectionVariables.set('simPhone', '5939' + Math.floor(10000000 + Math.random() * 89999999));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"external_call_id\": \"{{simCallId}}\",\n  \"remote_uri\": \"{{simPhone}}\",\n  \"remote_display_name\": \"Cliente Sim\",\n  \"direction\": \"outbound\",\n  \"state\": \"ended\",\n  \"started_at\": \"2026-07-13T15:00:00.000Z\",\n  \"ended_at\": \"2026-07-13T15:03:20.000Z\",\n  \"duration_seconds\": 200\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/voice/calls/logs", "host": ["{{baseUrl}}"], "path": ["voice", "calls", "logs"] }
+          }
+        },
+        {
+          "name": "Listar logs de llamadas",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/voice/calls/logs?page=1&limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["voice", "calls", "logs"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Listar campañas dialer",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": { "raw": "{{baseUrl}}/dialer/campaigns", "host": ["{{baseUrl}}"], "path": ["dialer", "campaigns"] }
+          }
+        },
+        {
+          "name": "Crear campaña dialer (preview)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const c = pm.response.json();",
+                  "  if (c.id) { pm.collectionVariables.set('campaignId', c.id); pm.environment.set('campaignId', c.id); }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Tenant-Key", "value": "{{tenantKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Campaña Sim Postman\",\n  \"channel_id\": \"{{whatsappChannelId}}\",\n  \"queue_id\": \"{{queueId}}\",\n  \"mode\": \"PREVIEW\",\n  \"pacing_sec\": 30,\n  \"max_attempts\": 3\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/dialer/campaigns", "host": ["{{baseUrl}}"], "path": ["dialer", "campaigns"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 — Reportes y dashboard",
+      "item": [
+        {
+          "name": "Dashboard stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": { "raw": "{{baseUrl}}/dashboard/stats", "host": ["{{baseUrl}}"], "path": ["dashboard", "stats"] }
+          }
+        },
+        {
+          "name": "Reporte resumen (KPIs)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/reports/summary?date_from=2026-07-01&date_to=2026-07-31",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "summary"],
+              "query": [
+                { "key": "date_from", "value": "2026-07-01" },
+                { "key": "date_to", "value": "2026-07-31" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reporte volumen",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Tenant-Key", "value": "{{tenantKey}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/reports/volume?date_from=2026-07-01&date_to=2026-07-31",
+              "host": ["{{baseUrl}}"],
+              "path": ["reports", "volume"],
+              "query": [
+                { "key": "date_from", "value": "2026-07-01" },
+                { "key": "date_to", "value": "2026-07-31" }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

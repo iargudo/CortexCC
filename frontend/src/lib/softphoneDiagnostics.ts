@@ -40,7 +40,7 @@ export function checkSoftphoneConfig(config: SipConfig): SoftphoneConfigCheck {
 export function getSecureContextIssue(): string | null {
   if (typeof window === "undefined") return null;
   if (window.isSecureContext) return null;
-  return "El softphone requiere HTTPS. Acceda por https:// (mismo host y puerto 8080), no por http://.";
+  return "El softphone requiere HTTPS. Acceda por https:// (mismo host y puerto 8087), no por http://.";
 }
 
 export function getSoftphoneStatusMessage(input: {

@@ -7,14 +7,14 @@ export const REFRESH_TOKEN_KEY = "cortexcc_refresh_token";
 export function getApiBase(): string {
   const v = import.meta.env.VITE_API_URL as string | undefined;
   if (v?.trim()) return v.replace(/\/$/, "");
-  return "http://localhost:3030/api";
+  return "http://localhost:3037/api";
 }
 
 /** Socket.IO server origin (no path). Default: same host as API without /api */
 export function getWsOrigin(): string {
   const v = import.meta.env.VITE_WS_URL as string | undefined;
   if (v?.trim()) return v.replace(/\/$/, "");
-  return getApiBase().replace(/\/api\/?$/, "") || "http://localhost:3030";
+  return getApiBase().replace(/\/api\/?$/, "") || "http://localhost:3037";
 }
 
 export function getSocketPath(): string {
@@ -55,6 +55,16 @@ export function clearTokens(): void {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
+/** Nombre del evento emitido cuando una sesión queda inválida y no se puede refrescar. */
+export const AUTH_EXPIRED_EVENT = "cortexcc:auth-expired";
+
+function notifyAuthExpired(): void {
+  clearTokens();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+  }
+}
+
 let refreshPromise: Promise<string | null> | null = null;
 
 async function tryRefresh(): Promise<string | null> {
@@ -82,18 +92,34 @@ async function tryRefresh(): Promise<string | null> {
   return refreshPromise;
 }
 
+/** Endpoints de autenticación donde un 401 es esperable y no debe forzar logout. */
+function isAuthEndpoint(path: string): boolean {
+  return (
+    path.includes("/auth/login") ||
+    path.includes("/auth/refresh") ||
+    path.includes("/auth/logout")
+  );
+}
+
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const url = path.startsWith("http") ? path : `${getApiBase()}${path.startsWith("/") ? path : `/${path}`}`;
   const headers = buildApiHeaders(init);
 
   let res = await fetch(url, { ...init, headers });
 
-  if (res.status === 401 && getRefreshToken()) {
-    const newTok = await tryRefresh();
-    if (newTok) {
-      const h2 = buildApiHeaders(init);
-      h2.set("Authorization", `Bearer ${newTok}`);
-      res = await fetch(url, { ...init, headers: h2 });
+  if (res.status === 401 && getAccessToken() && !isAuthEndpoint(path)) {
+    if (getRefreshToken()) {
+      const newTok = await tryRefresh();
+      if (newTok) {
+        const h2 = buildApiHeaders(init);
+        h2.set("Authorization", `Bearer ${newTok}`);
+        res = await fetch(url, { ...init, headers: h2 });
+      }
+    }
+    // El token es inválido/expirado y no se pudo refrescar: limpiar sesión y avisar a la app
+    // para forzar re-login en lugar de dejar al usuario atrapado con 401 repetidos.
+    if (res.status === 401) {
+      notifyAuthExpired();
     }
   }
 

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Conversation } from "@/data/mock";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,10 @@ import { apiJson } from "@/lib/api";
 import { toast } from "sonner";
 import {
   AlertTriangle, ArrowRightLeft, Eye, UserPlus, Radio, Bot, ShieldCheck,
-  Users, Activity,
+  Users, Activity, RefreshCw,
 } from "lucide-react";
+
+const LIVE_REFRESH_MS = 10_000;
 
 type DashboardStats = {
   agents_online: number;
@@ -48,24 +50,36 @@ export default function SupervisorPage() {
   const [assignConversationId, setAssignConversationId] = useState<string | null>(null);
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [monitorAgent, setMonitorAgent] = useState({ name: "", id: "" });
+  const queryClient = useQueryClient();
 
   const statsQuery = useQuery({
     queryKey: ["supervisor", "live-board"],
     queryFn: () => apiJson<DashboardStats>("/supervisor/live-board"),
     enabled: canAll,
+    refetchInterval: LIVE_REFRESH_MS,
   });
 
   const agentsQuery = useQuery({
     queryKey: ["agents", "supervisor"],
     queryFn: () => apiJson<AgentRow[]>("/agents"),
     enabled: canAll,
+    refetchInterval: LIVE_REFRESH_MS,
   });
 
   const convQuery = useQuery({
     queryKey: ["conversations", "all", "supervisor"],
     queryFn: () => apiJson<{ data: Conversation[] }>("/conversations?tab=all&limit=100&page=1"),
     enabled: canAll,
+    refetchInterval: LIVE_REFRESH_MS,
   });
+
+  const isRefreshing = statsQuery.isFetching || agentsQuery.isFetching || convQuery.isFetching;
+
+  const refreshAll = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["supervisor", "live-board"] });
+    void queryClient.invalidateQueries({ queryKey: ["agents", "supervisor"] });
+    void queryClient.invalidateQueries({ queryKey: ["conversations", "all", "supervisor"] });
+  }, [queryClient]);
 
   const stats = statsQuery.data;
   const agents = agentsQuery.data ?? [];
@@ -102,8 +116,25 @@ export default function SupervisorPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">Supervisor</h1>
         <div className="flex items-center gap-2">
-          <Radio size={14} className="text-status-online animate-pulse-dot" />
-          <span className="text-xs text-muted-foreground">En vivo</span>
+          <div className="flex items-center gap-1.5 bg-muted/50 px-2.5 py-1 rounded-full">
+            <Radio size={14} className="text-status-online animate-pulse-dot" />
+            <span className="text-xs text-muted-foreground">
+              Actualiza cada {LIVE_REFRESH_MS / 1000}s
+              {statsQuery.dataUpdatedAt > 0 && (
+                <> · {new Date(statsQuery.dataUpdatedAt).toLocaleTimeString()}</>
+              )}
+            </span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            disabled={isRefreshing}
+            onClick={refreshAll}
+          >
+            <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+            Actualizar
+          </Button>
         </div>
       </div>
 

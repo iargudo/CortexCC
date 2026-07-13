@@ -3,9 +3,9 @@ import { z } from "zod";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  PORT: z.coerce.number().default(3030),
+  PORT: z.coerce.number().default(3037),
   API_PREFIX: z.string().default("/api"),
-  CORS_ORIGIN: z.string().default("http://localhost:8080"),
+  CORS_ORIGIN: z.string().default("http://localhost:8087"),
   MASTER_DATABASE_URL: z.string(),
   DATABASE_URL: z.string().optional(),
   JWT_SECRET: z.string().min(32),
@@ -21,6 +21,9 @@ const envSchema = z.object({
   SOCKETIO_PATH: z.string().default("/socket.io"),
   SOCKETIO_CORS_ORIGIN: z.string().optional(),
   INTEGRATION_API_KEY: z.string().min(8),
+  // Ventana (en días) para la tasa de conversión usada por el ruteo PRIORITY_BASED.
+  // 0 = usar el histórico acumulado de por vida (sales_won/sales_total).
+  PRIORITY_WINDOW_DAYS: z.coerce.number().min(0).default(30),
   STORAGE_PROVIDER: z.enum(["local", "s3", "azure"]).default("local"),
   STORAGE_LOCAL_DIR: z.string().default("uploads"),
   AWS_S3_BUCKET: z.string().optional(),
@@ -44,9 +47,9 @@ const rawEnv = parsed.success
   ? parsed.data
   : {
       NODE_ENV: "test" as const,
-      PORT: 3030,
+      PORT: 3037,
       API_PREFIX: "/api",
-      CORS_ORIGIN: "http://localhost:8080",
+      CORS_ORIGIN: "http://localhost:8087",
       MASTER_DATABASE_URL:
         process.env.MASTER_DATABASE_URL ?? "postgresql://test:test@localhost:5432/cortexcc_master",
       DATABASE_URL: process.env.DATABASE_URL ?? "postgresql://test:test@localhost:5432/test",
@@ -60,6 +63,7 @@ const rawEnv = parsed.success
       SOCKETIO_PATH: "/socket.io",
       SOCKETIO_CORS_ORIGIN: undefined,
       INTEGRATION_API_KEY: "test-integration-key-123456",
+      PRIORITY_WINDOW_DAYS: 30,
       STORAGE_PROVIDER: "local" as const,
       STORAGE_LOCAL_DIR: "uploads",
       AWS_S3_BUCKET: undefined,

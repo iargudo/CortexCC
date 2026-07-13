@@ -18,12 +18,12 @@ const devHttps =
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 8080,
+    port: 8087,
     https: devHttps,
     proxy: devHttps
       ? {
-          "/api": { target: "http://127.0.0.1:3030", changeOrigin: true },
-          "/socket.io": { target: "http://127.0.0.1:3030", ws: true, changeOrigin: true },
+          "/api": { target: "http://127.0.0.1:3037", changeOrigin: true },
+          "/socket.io": { target: "http://127.0.0.1:3037", ws: true, changeOrigin: true },
         }
       : undefined,
     hmr: devHttps ? { protocol: "wss", host: "localhost" } : { overlay: false },

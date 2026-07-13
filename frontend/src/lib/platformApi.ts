@@ -4,7 +4,7 @@ export const PLATFORM_REFRESH_TOKEN_KEY = "cortexcc_platform_refresh_token";
 export function getApiBase(): string {
   const v = import.meta.env.VITE_API_URL as string | undefined;
   if (v?.trim()) return v.replace(/\/$/, "");
-  return "http://localhost:3030/api";
+  return "http://localhost:3037/api";
 }
 
 function getPlatformAccessToken(): string | null {

@@ -596,7 +596,7 @@ export function useSipPhone() {
     async (target: string, conversationId?: string) => {
       if (typeof window !== "undefined" && !window.isSecureContext) {
         throw new Error(
-          "El micrófono requiere HTTPS. Accede por https:// en lugar de http:// (misma IP y puerto 8080)."
+          "El micrófono requiere HTTPS. Accede por https:// en lugar de http:// (misma IP y puerto 8087)."
         );
       }
 

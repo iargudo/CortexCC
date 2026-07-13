@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Alinea la IP LAN del Mac/host en todos los puntos necesarios para pruebas en red local:
-#   - frontend/.env (VITE_API_URL, VITE_WS_URL → HTTPS :8080)
+#   - frontend/.env (VITE_API_URL, VITE_WS_URL → HTTPS :8087)
 #   - backend/.env (CORS_ORIGIN, SOCKETIO_CORS_ORIGIN)
 #   - Master DB (tenants.custom_domain)
 #   - Tenant DB (organization_settings.pbx_host, sip_server, sip_realm + channels VOICE ariBaseUrl)
@@ -152,7 +152,7 @@ if ! is_valid_ipv4 "$LAN_IP"; then
 fi
 
 LAN_NET="$(lan_net_from_ip "$LAN_IP")"
-FRONTEND_ORIGIN="https://${LAN_IP}:8080"
+FRONTEND_ORIGIN="https://${LAN_IP}:8087"
 SIP_WSS="wss://${LAN_IP}:8089/ws"
 ARI_BASE="http://${LAN_IP}:8074"
 
@@ -220,12 +220,12 @@ fi
 # 6. Regenerar pjsip_agents.conf + reload PJSIP
 if ! $SKIP_ASTERISK && [[ -x "$SYNC_SCRIPT" ]]; then
   if $DRY_RUN; then
-    echo "[dry-run] BACKEND_URL=http://127.0.0.1:3030 TENANT_KEY=${TENANT_KEY} $SYNC_SCRIPT"
+    echo "[dry-run] BACKEND_URL=http://127.0.0.1:3037 TENANT_KEY=${TENANT_KEY} $SYNC_SCRIPT"
   else
-    if BACKEND_URL="http://127.0.0.1:3030" TENANT_KEY="$TENANT_KEY" "$SYNC_SCRIPT"; then
+    if BACKEND_URL="http://127.0.0.1:3037" TENANT_KEY="$TENANT_KEY" "$SYNC_SCRIPT"; then
       echo "OK sync-agent-endpoints + reload PJSIP"
     else
-      echo "WARN: sync-agent-endpoints falló (¿backend en :3030?). Ejecuta manualmente cuando el API esté arriba." >&2
+      echo "WARN: sync-agent-endpoints falló (¿backend en :3037?). Ejecuta manualmente cuando el API esté arriba." >&2
     fi
   fi
 elif $SKIP_ASTERISK; then

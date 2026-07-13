@@ -5,7 +5,7 @@
 # Usage:
 #   ./sync-agent-endpoints.sh
 #   ADMIN_TOKEN=<jwt> ./sync-agent-endpoints.sh
-#   BACKEND_URL=http://localhost:3030 ADMIN_EMAIL=admin@cortex.local ./sync-agent-endpoints.sh
+#   BACKEND_URL=http://localhost:3037 ADMIN_EMAIL=admin@cortex.local ./sync-agent-endpoints.sh
 #
 set -euo pipefail
 
@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ASTERISK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONF_FILE="$ASTERISK_DIR/conf/pjsip_agents.conf"
 
-BACKEND_URL="${BACKEND_URL:-http://localhost:3030}"
+BACKEND_URL="${BACKEND_URL:-http://localhost:3037}"
 API_PREFIX="${API_PREFIX:-/api}"
 TENANT_KEY="${TENANT_KEY:-local}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@cortex.local}"

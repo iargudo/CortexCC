@@ -3,8 +3,8 @@ FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
-ARG VITE_API_URL=http://localhost:3030/api
-ARG VITE_WS_URL=http://localhost:3030
+ARG VITE_API_URL=http://localhost:3037/api
+ARG VITE_WS_URL=http://localhost:3037
 ARG VITE_SOCKET_PATH=/socket.io
 
 ENV VITE_API_URL=${VITE_API_URL}
@@ -21,7 +21,7 @@ FROM node:20-bookworm-slim AS runner
 
 WORKDIR /app
 
-ARG APP_PORT=8080
+ARG APP_PORT=8087
 ENV NODE_ENV=production
 ENV APP_PORT=${APP_PORT}
 

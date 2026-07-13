@@ -12,9 +12,9 @@
 
 Variables claves validadas en `backend/src/config/env.ts`:
 
-- `PORT` (default `3030`)
+- `PORT` (default `3037`)
 - `API_PREFIX` (default `/api`)
-- `CORS_ORIGIN` (default `http://localhost:8080`)
+- `CORS_ORIGIN` (default `http://localhost:8087`)
 - `MASTER_DATABASE_URL` — conexion a la base Master (tabla `tenants`)
 - `DATABASE_URL` — opcional en runtime; usada por scripts CLI (`migrate:tenant`, `seed:tenant`) apuntando a una BD tenant
 - `REDIS_URL`

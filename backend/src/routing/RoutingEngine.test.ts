@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { conversionScore, rankAgentsByStrategy, type AgentScore } from "./RoutingEngine.js";
+import {
+  aggregateConversionStats,
+  conversionScore,
+  rankAgentsByStrategy,
+  type AgentScore,
+  type CreditedAssignmentRow,
+} from "./RoutingEngine.js";
 
 function d(iso: string): Date {
   return new Date(iso);
@@ -125,5 +131,63 @@ describe("conversionScore", () => {
     ];
     const ranked = rankAgentsByStrategy(candidates, "PRIORITY_BASED");
     expect(ranked[0].userId).toBe("strong");
+  });
+});
+
+describe("aggregateConversionStats", () => {
+  it("counts wins and totals per agent", () => {
+    const rows: CreditedAssignmentRow[] = [
+      { user_id: "a1", conversation_id: "c1", is_conversion: true },
+      { user_id: "a1", conversation_id: "c2", is_conversion: false },
+      { user_id: "a2", conversation_id: "c3", is_conversion: true },
+    ];
+    const stats = aggregateConversionStats(rows);
+    expect(stats.get("a1")).toEqual({ won: 1, total: 2 });
+    expect(stats.get("a2")).toEqual({ won: 1, total: 1 });
+  });
+
+  it("dedupes multiple assignments to the same conversation per agent", () => {
+    const rows: CreditedAssignmentRow[] = [
+      { user_id: "a1", conversation_id: "c1", is_conversion: true },
+      { user_id: "a1", conversation_id: "c1", is_conversion: true },
+      { user_id: "a1", conversation_id: "c1", is_conversion: true },
+    ];
+    const stats = aggregateConversionStats(rows);
+    expect(stats.get("a1")).toEqual({ won: 1, total: 1 });
+  });
+
+  it("credits the same conversation to each agent that handled it", () => {
+    const rows: CreditedAssignmentRow[] = [
+      { user_id: "a1", conversation_id: "c1", is_conversion: true },
+      { user_id: "a2", conversation_id: "c1", is_conversion: true },
+    ];
+    const stats = aggregateConversionStats(rows);
+    expect(stats.get("a1")).toEqual({ won: 1, total: 1 });
+    expect(stats.get("a2")).toEqual({ won: 1, total: 1 });
+  });
+
+  it("returns an empty map for no rows", () => {
+    expect(aggregateConversionStats([]).size).toBe(0);
+  });
+
+  it("feeds conversionScore so recent performance drives PRIORITY_BASED", () => {
+    const rows: CreditedAssignmentRow[] = [
+      ...Array.from({ length: 30 }, (_, i) => ({
+        user_id: "strong",
+        conversation_id: `s${i}`,
+        is_conversion: i < 24, // 24/30
+      })),
+      ...Array.from({ length: 30 }, (_, i) => ({
+        user_id: "weak",
+        conversation_id: `w${i}`,
+        is_conversion: i < 3, // 3/30
+      })),
+    ];
+    const stats = aggregateConversionStats(rows);
+    const strong = stats.get("strong")!;
+    const weak = stats.get("weak")!;
+    expect(conversionScore(strong.won, strong.total)).toBeGreaterThan(
+      conversionScore(weak.won, weak.total)
+    );
   });
 });

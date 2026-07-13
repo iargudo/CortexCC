@@ -46,7 +46,7 @@ async function main(): Promise<void> {
     console.log(`Created platform admin: ${email}`);
   }
 
-  console.log("\nPlatform admin console: http://localhost:8080/platform/login");
+  console.log("\nPlatform admin console: http://localhost:8087/platform/login");
   console.log(`  Email:    ${email}`);
   if (!process.env.PLATFORM_ADMIN_PASSWORD) {
     console.log(`  Password: ${password} (default — change in production)`);

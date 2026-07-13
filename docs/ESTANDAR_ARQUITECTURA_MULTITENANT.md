@@ -101,7 +101,7 @@ si no:
 
 Para probar otro tenant en local: cambia `TENANT_KEY` y reinicia el servidor de desarrollo.
 
-**Acceso por IP LAN** (otra máquina en la red): ejecutar `./scripts/set-lan-ip.sh` desde la raíz del repo (actualiza `custom_domain`, `.env`, softphone y Asterisk). No usar `VITE_TENANT_KEY`. El softphone WebRTC requiere **HTTPS** (`https://<IP>:8080` en dev). Ver `docs/05-telefonia-asterisk-softphone.md`.
+**Acceso por IP LAN** (otra máquina en la red): ejecutar `./scripts/set-lan-ip.sh` desde la raíz del repo (actualiza `custom_domain`, `.env`, softphone y Asterisk). No usar `VITE_TENANT_KEY`. El softphone WebRTC requiere **HTTPS** (`https://<IP>:8087` en dev). Ver `docs/05-telefonia-asterisk-softphone.md`.
 
 ### 3.3 Login — solo credenciales
 

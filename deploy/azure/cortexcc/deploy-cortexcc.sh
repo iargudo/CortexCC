@@ -137,8 +137,8 @@ load_env() {
     fi
   done
 
-  BACKEND_PORT="${BACKEND_PORT:-3030}"
-  FRONTEND_PORT="${FRONTEND_PORT:-8080}"
+  BACKEND_PORT="${BACKEND_PORT:-3037}"
+  FRONTEND_PORT="${FRONTEND_PORT:-8087}"
   API_PREFIX="${API_PREFIX:-/api}"
   APP_SERVICE_SKU="${APP_SERVICE_SKU:-B1}"
   RUN_PRISMA_SEED="${RUN_PRISMA_SEED:-false}"
@@ -196,8 +196,8 @@ load_env() {
     fi
   fi
 
-  if [[ "$BACKEND_PORT" != "3030" || "$FRONTEND_PORT" != "8080" ]]; then
-    log_err "Puertos fijos del proyecto: BACKEND_PORT=3030 y FRONTEND_PORT=8080"
+  if [[ "$BACKEND_PORT" != "3037" || "$FRONTEND_PORT" != "8087" ]]; then
+    log_err "Puertos fijos del proyecto: BACKEND_PORT=3037 y FRONTEND_PORT=8087"
     exit 1
   fi
 
@@ -222,13 +222,13 @@ load_env() {
 }
 
 validate_local_project_ports() {
-  log_step "Validando puertos locales del proyecto (3030 / 8080)"
+  log_step "Validando puertos locales del proyecto (3037 / 8087)"
 
   if [[ -f "$BACKEND_DIR/.env" ]]; then
     local backend_port
     backend_port="$(awk -F= '/^PORT=/{print $2; exit}' "$BACKEND_DIR/.env" | tr -d '[:space:]')"
-    if [[ -n "$backend_port" && "$backend_port" != "3030" ]]; then
-      log_err "backend/.env tiene PORT=$backend_port; debe ser 3030"
+    if [[ -n "$backend_port" && "$backend_port" != "3037" ]]; then
+      log_err "backend/.env tiene PORT=$backend_port; debe ser 3037"
       exit 1
     fi
   fi
@@ -236,8 +236,8 @@ validate_local_project_ports() {
   if [[ -f "$FRONTEND_DIR/.env" ]]; then
     local vite_url
     vite_url="$(awk -F= '/^VITE_API_URL=/{print $2; exit}' "$FRONTEND_DIR/.env" | tr -d '[:space:]')"
-    if [[ -n "$vite_url" && "$vite_url" != *":3030"* ]]; then
-      log_warn "frontend/.env VITE_API_URL no apunta al puerto 3030: $vite_url"
+    if [[ -n "$vite_url" && "$vite_url" != *":3037"* ]]; then
+      log_warn "frontend/.env VITE_API_URL no apunta al puerto 3037: $vite_url"
     fi
   fi
 

@@ -12,19 +12,19 @@ CortexCC es **multi-tenant database-per-tenant**: un despliegue atiende N empres
 
 ```
   cliente-a.app.com ──┐
-  ventas.clienteb.com ┼──► Frontend :8080 ──► Backend :3030 ──┬──► Master DB (tenants)
+  ventas.clienteb.com ┼──► Frontend :8087 ──► Backend :3037 ──┬──► Master DB (tenants)
                         X-Tenant-Key                         ├──► BD tenant A
                                                            ├──► BD tenant B
                                                            ├──► Redis / BullMQ
                                                            └──► Asterisk (voz)
 ```
 
-1. **Frontend web** (`frontend/`): SPA React + TypeScript + Vite (puerto 8080).
-2. **Backend API** (`backend/`): Node.js + Express + Prisma + Socket.IO (puerto 3030).
+1. **Frontend web** (`frontend/`): SPA React + TypeScript + Vite (puerto 8087).
+2. **Backend API** (`backend/`): Node.js + Express + Prisma + Socket.IO (puerto 3037).
 3. **Telefonía** (`deploy/asterisk/`): Asterisk en Docker con SIP UDP, WSS, ARI y RTP.
 4. **Despliegue Azure** (`deploy/azure/`): App Service + ACR + Docker.
 
-> Los puertos `3030` (backend) y `8080` (frontend) están **fijados** y no deben cambiarse; el script de despliegue valida explícitamente esto.
+> Los puertos `3037` (backend) y `8087` (frontend) están **fijados** y no deben cambiarse; el script de despliegue valida explícitamente esto.
 
 ---
 
@@ -151,9 +151,9 @@ Validado en `backend/src/config/env.ts`. Variables principales:
 | Variable | Default | Notas |
 |---|---|---|
 | `NODE_ENV` | `development` | `development` / `production` / `test` |
-| `PORT` | `3030` | **Fijo** — no cambiar |
+| `PORT` | `3037` | **Fijo** — no cambiar |
 | `API_PREFIX` | `/api` | Prefijo de todas las rutas REST |
-| `CORS_ORIGIN` | `http://localhost:8080` | Origen del SPA |
+| `CORS_ORIGIN` | `http://localhost:8087` | Origen del SPA |
 | `MASTER_DATABASE_URL` | — | BD Master (tabla `tenants`) — obligatoria en runtime |
 | `DATABASE_URL` | — | BD tenant local — scripts CLI (`migrate:tenant`, `seed:tenant`) |
 | `REDIS_URL` | `redis://localhost:6379/2` | DB lógica `/2` |
@@ -610,8 +610,8 @@ frontend/src/
 `frontend/.env`:
 
 ```env
-VITE_API_URL=http://localhost:3030/api
-VITE_WS_URL=http://localhost:3030
+VITE_API_URL=http://localhost:3037/api
+VITE_WS_URL=http://localhost:3037
 VITE_SOCKET_PATH=/socket.io
 ```
 
@@ -704,7 +704,7 @@ npm install
 npm run prisma:generate
 SEED_LOCAL_TENANT=true npm run setup:master
 npm run migrate:tenant
-npm run dev                      # puerto 3030
+npm run dev                      # puerto 3037
 # opcional, worker dedicado:
 npm run worker
 ```
@@ -715,10 +715,10 @@ npm run worker
 cd frontend
 cp .env.example .env             # VITE_API_URL, VITE_TENANT_KEY=local (solo localhost)
 npm install
-npm run dev                      # puerto 8080; HTTPS automático si existen deploy/asterisk/keys/*.pem
+npm run dev                      # puerto 8087; HTTPS automático si existen deploy/asterisk/keys/*.pem
 ```
 
-**Pruebas en LAN:** `./scripts/set-lan-ip.sh` — alinea IP en `.env`, BD y Asterisk. Acceder por `https://<IP-LAN>:8080`. Ver `docs/05-telefonia-asterisk-softphone.md`.
+**Pruebas en LAN:** `./scripts/set-lan-ip.sh` — alinea IP en `.env`, BD y Asterisk. Acceder por `https://<IP-LAN>:8087`. Ver `docs/05-telefonia-asterisk-softphone.md`.
 
 **Asterisk:**
 
@@ -737,7 +737,7 @@ Archivos:
 Nota importante (red/audio):
 
 - En `deploy/asterisk/conf/pjsip.conf`, actualiza `external_signaling_address`, `external_media_address`, `media_address` y `local_net` para que coincidan con tu LAN/IP real; si no, puedes tener **audio de un solo lado** o SDP anunciando IPs incorrectas.
-- Para probar softphone desde otra PC en LAN, el frontend debe servirse por **HTTPS** en el puerto 8080 (Vite dev + certificados en `deploy/asterisk/keys/`). Con `http://192.168.x.x` el registro SIP puede funcionar pero las llamadas no (micrófono bloqueado).
+- Para probar softphone desde otra PC en LAN, el frontend debe servirse por **HTTPS** en el puerto 8087 (Vite dev + certificados en `deploy/asterisk/keys/`). Con `http://192.168.x.x` el registro SIP puede funcionar pero las llamadas no (micrófono bloqueado).
 
 ### 11.3 Checklist de validación post-deploy
 
@@ -787,7 +787,7 @@ Nota importante (red/audio):
 
 ## 14. Patrones técnicos a respetar
 
-- **No cambiar puertos** `3030` y `8080`. Validar con `cat backend/.env` y `cat frontend/.env` antes de levantar servicios.
+- **No cambiar puertos** `3037` y `8087`. Validar con `cat backend/.env` y `cat frontend/.env` antes de levantar servicios.
 - **Validar entorno con Zod** ante cualquier nueva variable. Romper en arranque si falta una crítica.
 - **Permisos JSON** en `Role.permissions`: cualquier endpoint nuevo debe declarar `requirePermission`.
 - **Multi-tenant**: toda petición API con `X-Tenant-Key`; JWT con `tenantKey`; `getPrisma()` nunca recibe tenant como parámetro.

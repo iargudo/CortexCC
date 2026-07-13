@@ -135,7 +135,7 @@ Variables comunes (`frontend/.env`):
 - `VITE_TENANT_KEY` — obligatorio (ej. `local`)
 - `VITE_TENANT_NAME` — nombre visible (ej. `Desarrollo Local`)
 
-**Desarrollo en LAN (IP):** no usar `VITE_TENANT_KEY`; registrar la IP en `tenants.custom_domain`. El frontend debe servirse por **HTTPS** (`https://<IP>:8080`) para que el softphone WebRTC pueda usar el micrófono. Ver [05-telefonia-asterisk-softphone.md](./05-telefonia-asterisk-softphone.md#pruebas-en-lan-desarrollo).
+**Desarrollo en LAN (IP):** no usar `VITE_TENANT_KEY`; registrar la IP en `tenants.custom_domain`. El frontend debe servirse por **HTTPS** (`https://<IP>:8087`) para que el softphone WebRTC pueda usar el micrófono. Ver [05-telefonia-asterisk-softphone.md](./05-telefonia-asterisk-softphone.md#pruebas-en-lan-desarrollo).
 
 En **produccion** no definir `VITE_TENANT_KEY`: el tenant se resuelve por `window.location.hostname` via `GET /api/tenants/resolve`. Un unico despliegue frontend atiende N dominios (DNS apuntando al mismo origin).
 

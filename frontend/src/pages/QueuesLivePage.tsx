@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useQuery, useQueries } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
+import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import type { Conversation } from "@/data/mock";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { apiJson } from "@/lib/api";
 import {
   Clock, Users, AlertTriangle, ArrowUpDown, UserPlus, GripVertical,
-  Timer,
+  Timer, RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +29,8 @@ type QueueRow = {
   is_active: boolean;
 };
 
+const LIVE_REFRESH_MS = 10_000;
+
 export default function QueuesLivePage() {
   // Jefatura (admin/supervisor) y coordinadores; el backend acota las colas por equipo al coordinador.
   const canSupervisor = useAuthStore(
@@ -37,11 +39,13 @@ export default function QueuesLivePage() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignContact, setAssignContact] = useState("");
   const [assignConversationId, setAssignConversationId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const queuesQuery = useQuery({
     queryKey: ["queues", "live"],
     queryFn: () => apiJson<QueueRow[]>("/queues"),
     enabled: canSupervisor,
+    refetchInterval: LIVE_REFRESH_MS,
   });
 
   const queues = (queuesQuery.data ?? []).filter((q) => q.is_active);
@@ -51,6 +55,7 @@ export default function QueuesLivePage() {
       queryKey: ["queues", q.id, "waiting"],
       queryFn: () => apiJson<Conversation[]>(`/queues/${q.id}/waiting`),
       enabled: canSupervisor && queuesQuery.isSuccess && queues.length > 0,
+      refetchInterval: LIVE_REFRESH_MS,
     })),
   });
 
@@ -59,8 +64,18 @@ export default function QueuesLivePage() {
       queryKey: ["queues", q.id, "active"],
       queryFn: () => apiJson<Conversation[]>(`/queues/${q.id}/active`),
       enabled: canSupervisor && queuesQuery.isSuccess && queues.length > 0,
+      refetchInterval: LIVE_REFRESH_MS,
     })),
   });
+
+  const isRefreshing =
+    queuesQuery.isFetching ||
+    waitingQueries.some((q) => q.isFetching) ||
+    activeQueries.some((q) => q.isFetching);
+
+  const refreshAll = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["queues"] });
+  }, [queryClient]);
 
   const queueData = useMemo(() => {
     return queues.map((queue, i) => ({
@@ -87,8 +102,23 @@ export default function QueuesLivePage() {
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 bg-muted/50 px-2.5 py-1 rounded-full">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs text-muted-foreground">Datos del API</span>
+            <span className="text-xs text-muted-foreground">
+              Actualiza cada {LIVE_REFRESH_MS / 1000}s
+              {queuesQuery.dataUpdatedAt > 0 && (
+                <> · {new Date(queuesQuery.dataUpdatedAt).toLocaleTimeString()}</>
+              )}
+            </span>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            disabled={isRefreshing}
+            onClick={refreshAll}
+          >
+            <RefreshCw size={14} className={isRefreshing ? "animate-spin" : ""} />
+            Actualizar
+          </Button>
         </div>
       </div>
 
