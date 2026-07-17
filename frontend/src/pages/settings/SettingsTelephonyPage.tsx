@@ -289,6 +289,19 @@ export default function SettingsTelephonyPage() {
               className="h-8 text-sm"
             />
           </div>
+          <div>
+            <Label className="text-xs">Código de país por defecto</Label>
+            <Input
+              value={form.defaultCountryCode}
+              onChange={(e) => patchForm({ defaultCountryCode: e.target.value.toUpperCase() })}
+              className="h-8 text-sm font-mono uppercase"
+              maxLength={2}
+              placeholder="EC"
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              ISO 3166-1 alpha-2. Se usa para normalizar números salientes/entrantes.
+            </p>
+          </div>
           <div className="md:col-span-2">
             <Label className="text-xs">Servidores STUN (uno por línea)</Label>
             <Textarea
@@ -296,6 +309,18 @@ export default function SettingsTelephonyPage() {
               onChange={(e) => patchForm({ stunServers: e.target.value })}
               className="min-h-[72px] text-xs font-mono"
             />
+          </div>
+          <div className="md:col-span-2">
+            <Label className="text-xs">Servidores TURN (uno por línea)</Label>
+            <Textarea
+              value={form.turnServers}
+              onChange={(e) => patchForm({ turnServers: e.target.value })}
+              className="min-h-[72px] text-xs font-mono"
+              placeholder="turn:turn.empresa.com:3478?transport=udp"
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Opcional. Necesario para atravesar NAT/firewalls estrictos en el softphone.
+            </p>
           </div>
         </CardContent>
       </Card>

@@ -5,6 +5,7 @@ export type TelephonySettingsView = {
   pbxHost: string;
   pbxWssPort: number;
   pbxAriPort: number;
+  defaultCountryCode: string;
   derived: {
     sipServer: string;
     sipRealm: string;
@@ -37,9 +38,11 @@ export type TelephonyForm = {
   pbxAriPort: string;
   displayName: string;
   stunServers: string;
+  turnServers: string;
   iceGatheringTimeout: string;
   extensionRangeStart: string;
   extensionRangeEnd: string;
+  defaultCountryCode: string;
   voice: VoiceForm;
 };
 
@@ -50,9 +53,11 @@ export function defaultTelephonyForm(): TelephonyForm {
     pbxAriPort: "8074",
     displayName: "",
     stunServers: "stun:stun.l.google.com:19302",
+    turnServers: "",
     iceGatheringTimeout: "5000",
     extensionRangeStart: "7001",
     extensionRangeEnd: "7099",
+    defaultCountryCode: "EC",
     voice: parseVoiceForm({}),
   };
 }
@@ -64,9 +69,11 @@ export function parseTelephonyForm(data: TelephonySettingsView): TelephonyForm {
     pbxAriPort: String(data.pbxAriPort || 8074),
     displayName: data.softphone.displayName,
     stunServers: (data.softphone.stunServers ?? []).join("\n"),
+    turnServers: (data.softphone.turnServers ?? []).join("\n"),
     iceGatheringTimeout: String(data.softphone.iceGatheringTimeout || 5000),
     extensionRangeStart: String(data.softphone.extensionRangeStart || 7001),
     extensionRangeEnd: String(data.softphone.extensionRangeEnd || 7099),
+    defaultCountryCode: data.defaultCountryCode || "EC",
     voice: parseVoiceForm(data.voiceChannel.config),
   };
 }
@@ -76,14 +83,20 @@ export function buildTelephonyPayload(form: TelephonyForm) {
     .split(/[\n,]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+  const turnServers = form.turnServers
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   return {
     pbxHost: form.pbxHost.trim(),
     pbxWssPort: Number(form.pbxWssPort || "8089"),
     pbxAriPort: Number(form.pbxAriPort || "8074"),
+    defaultCountryCode: form.defaultCountryCode.trim().toUpperCase() || "EC",
     softphone: {
       displayName: form.displayName.trim(),
       stunServers: stunServers.length > 0 ? stunServers : ["stun:stun.l.google.com:19302"],
+      turnServers,
       iceGatheringTimeout: Number(form.iceGatheringTimeout || "5000"),
       extensionRangeStart: Number(form.extensionRangeStart || "7001"),
       extensionRangeEnd: Number(form.extensionRangeEnd || "7099"),

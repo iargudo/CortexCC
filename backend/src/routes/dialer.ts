@@ -177,6 +177,8 @@ export function buildDialerRouter(app: Express): Router {
         caller_id?: string;
         predictive_ratio?: number;
         max_lines?: number;
+        abandon_rate_max?: number;
+        require_agent_available?: boolean;
       };
       if (!body.name?.trim()) throw new HttpError(400, "name required");
       if (!body.channel_id) throw new HttpError(400, "channel_id required");
@@ -191,6 +193,12 @@ export function buildDialerRouter(app: Express): Router {
           caller_id: body.caller_id ?? null,
           predictive_ratio: body.predictive_ratio ?? 1.2,
           max_lines: body.max_lines ?? 5,
+          ...(typeof body.abandon_rate_max === "number"
+            ? { abandon_rate_max: body.abandon_rate_max }
+            : {}),
+          ...(typeof body.require_agent_available === "boolean"
+            ? { require_agent_available: body.require_agent_available }
+            : {}),
         },
       });
       res.status(201).json(created);
@@ -212,6 +220,8 @@ export function buildDialerRouter(app: Express): Router {
         caller_id?: string | null;
         predictive_ratio?: number;
         max_lines?: number;
+        abandon_rate_max?: number;
+        require_agent_available?: boolean;
       };
       const data: Record<string, unknown> = {};
       if (body.name?.trim()) data.name = body.name.trim();
@@ -223,6 +233,9 @@ export function buildDialerRouter(app: Express): Router {
       if (body.caller_id !== undefined) data.caller_id = body.caller_id || null;
       if (body.predictive_ratio !== undefined) data.predictive_ratio = body.predictive_ratio;
       if (body.max_lines !== undefined) data.max_lines = body.max_lines;
+      if (body.abandon_rate_max !== undefined) data.abandon_rate_max = body.abandon_rate_max;
+      if (body.require_agent_available !== undefined)
+        data.require_agent_available = body.require_agent_available;
       if (Object.keys(data).length === 0) throw new HttpError(400, "No fields to update");
 
       const updated = await getPrisma().dialerCampaign.update({

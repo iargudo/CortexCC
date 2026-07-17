@@ -137,6 +137,7 @@ export interface Disposition {
   category: string;
   requires_note: boolean;
   is_active: boolean;
+  is_conversion: boolean;
 }
 
 export interface SlaPolicy {
@@ -226,6 +227,7 @@ export interface BusinessHours {
   name: string;
   timezone: string;
   schedule: Record<string, { start: string; end: string }[]>;
+  holidays?: string[] | null;
 }
 
 // ==================== MOCK DATA ====================
@@ -399,12 +401,12 @@ export const mockTeams: Team[] = [
 ];
 
 export const mockDispositions: Disposition[] = [
-  { id: "d1", name: "Resuelto - Primera llamada", category: "resuelto", requires_note: false, is_active: true },
-  { id: "d2", name: "Resuelto - Seguimiento", category: "resuelto", requires_note: true, is_active: true },
-  { id: "d3", name: "No resuelto - Escalado", category: "no_resuelto", requires_note: true, is_active: true },
-  { id: "d4", name: "No resuelto - Cliente desistió", category: "no_resuelto", requires_note: false, is_active: true },
-  { id: "d5", name: "Convenio de pago", category: "seguimiento", requires_note: true, is_active: true },
-  { id: "d6", name: "Spam", category: "spam", requires_note: false, is_active: true },
+  { id: "d1", name: "Resuelto - Primera llamada", category: "resuelto", requires_note: false, is_active: true, is_conversion: false },
+  { id: "d2", name: "Resuelto - Seguimiento", category: "resuelto", requires_note: true, is_active: true, is_conversion: false },
+  { id: "d3", name: "No resuelto - Escalado", category: "no_resuelto", requires_note: true, is_active: true, is_conversion: false },
+  { id: "d4", name: "No resuelto - Cliente desistió", category: "no_resuelto", requires_note: false, is_active: true, is_conversion: false },
+  { id: "d5", name: "Convenio de pago", category: "seguimiento", requires_note: true, is_active: true, is_conversion: true },
+  { id: "d6", name: "Spam", category: "spam", requires_note: false, is_active: true, is_conversion: false },
 ];
 
 export const mockSlaPolicies: SlaPolicy[] = [

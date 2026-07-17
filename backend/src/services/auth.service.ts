@@ -160,6 +160,7 @@ export type AdminUpdateUserInput = {
   email?: string;
   first_name?: string;
   last_name?: string;
+  avatar_url?: string | null;
   max_concurrent?: number;
   status?: string;
   roleNames?: string[];
@@ -204,6 +205,10 @@ export async function adminUpdateUser(userId: string, body: AdminUpdateUserInput
   if (body.email !== undefined) data.email = body.email.trim().toLowerCase();
   if (body.first_name !== undefined) data.first_name = body.first_name.trim();
   if (body.last_name !== undefined) data.last_name = body.last_name.trim();
+  if (body.avatar_url !== undefined) {
+    const trimmed = typeof body.avatar_url === "string" ? body.avatar_url.trim() : "";
+    data.avatar_url = trimmed || null;
+  }
   if (typeof body.max_concurrent === "number") data.max_concurrent = body.max_concurrent;
   if (body.status !== undefined) {
     data.status = body.status as AgentStatus;

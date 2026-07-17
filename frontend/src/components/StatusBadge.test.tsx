@@ -34,6 +34,21 @@ describe("ConversationStatusBadge", () => {
     expect(screen.getByText("Resuelta")).toBeInTheDocument();
   });
 
+  it("emphasizes resolved status with online color classes", () => {
+    const { container } = render(
+      <ConversationStatusBadge status="RESOLVED" emphasizeResolved />
+    );
+    const badge = container.querySelector("span");
+    expect(badge?.className).toContain("text-status-online");
+    expect(badge?.className).not.toContain("text-muted-foreground");
+  });
+
+  it("keeps resolved muted when not emphasized", () => {
+    const { container } = render(<ConversationStatusBadge status="RESOLVED" />);
+    const badge = container.querySelector("span");
+    expect(badge?.className).toContain("text-muted-foreground");
+  });
+
   it("renders active and wrap-up states", () => {
     const { rerender } = render(<ConversationStatusBadge status="ACTIVE" />);
     expect(screen.getByText("Activa")).toBeInTheDocument();

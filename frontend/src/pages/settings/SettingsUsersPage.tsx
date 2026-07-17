@@ -21,6 +21,7 @@ type ApiUser = {
   status: string;
   max_concurrent: number;
   sip_extension?: string | null;
+  avatar_url?: string | null;
   roles: { role: { id: string; name: string } }[];
 };
 
@@ -31,7 +32,14 @@ type SoftphoneAssignResult = {
   password: string;
 };
 
-const ASSIGNABLE_ROLES = ["agent", "supervisor", "admin"] as const;
+const ASSIGNABLE_ROLES = ["agent", "coordinator", "supervisor", "admin"] as const;
+
+const ROLE_LABELS: Record<string, string> = {
+  agent: "Agent",
+  coordinator: "Coordinador",
+  supervisor: "Supervisor",
+  admin: "Admin",
+};
 
 const AGENT_STATUSES = ["ONLINE", "AWAY", "BUSY", "OFFLINE", "ON_BREAK", "FOLLOW_UP"] as const;
 
@@ -39,6 +47,7 @@ function primaryRoleName(roles: ApiUser["roles"]): string {
   const names = roles.map((r) => r.role.name);
   if (names.includes("admin")) return "admin";
   if (names.includes("supervisor")) return "supervisor";
+  if (names.includes("coordinator")) return "coordinator";
   return names[0] ?? "agent";
 }
 
@@ -61,6 +70,7 @@ export default function SettingsUsersPage() {
   const [editStatus, setEditStatus] = useState<string>("OFFLINE");
   const [editRoleName, setEditRoleName] = useState<string>("agent");
   const [editNewPassword, setEditNewPassword] = useState("");
+  const [editAvatarUrl, setEditAvatarUrl] = useState("");
   const [editSipExtension, setEditSipExtension] = useState("");
   const [editSipPassword, setEditSipPassword] = useState("");
   const [assignedSipPassword, setAssignedSipPassword] = useState<string | null>(null);
@@ -153,6 +163,7 @@ export default function SettingsUsersPage() {
         email: editEmail.trim().toLowerCase(),
         first_name: editFirstName.trim(),
         last_name: editLastName.trim(),
+        avatar_url: editAvatarUrl.trim() || null,
         max_concurrent: editMaxConcurrent,
         status: editStatus,
         roleNames: [editRoleName],
@@ -183,6 +194,7 @@ export default function SettingsUsersPage() {
     setEditStatus(u.status);
     setEditRoleName(primaryRoleName(u.roles));
     setEditNewPassword("");
+    setEditAvatarUrl(u.avatar_url ?? "");
     setEditSipExtension(u.sip_extension ?? "");
     setEditSipPassword("");
     setAssignedSipPassword(null);
@@ -385,8 +397,8 @@ export default function SettingsUsersPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {(roleOptions.length ? roleOptions : [...ASSIGNABLE_ROLES]).map((n) => (
-                    <SelectItem key={n} value={n} className="text-xs capitalize">
-                      {n}
+                    <SelectItem key={n} value={n} className="text-xs">
+                      {ROLE_LABELS[n] ?? n}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -443,6 +455,27 @@ export default function SettingsUsersPage() {
               </div>
             </div>
             <div>
+              <Label className="text-xs">URL de avatar</Label>
+              <div className="flex items-center gap-2">
+                {editAvatarUrl.trim() ? (
+                  <img
+                    src={editAvatarUrl.trim()}
+                    alt="avatar"
+                    className="h-8 w-8 shrink-0 rounded-full object-cover border"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                    }}
+                  />
+                ) : null}
+                <Input
+                  value={editAvatarUrl}
+                  onChange={(e) => setEditAvatarUrl(e.target.value)}
+                  className="h-8 text-sm"
+                  placeholder="https://…/foto.jpg"
+                />
+              </div>
+            </div>
+            <div>
               <Label className="text-xs">Máx. conversaciones concurrentes</Label>
               <Input
                 type="number"
@@ -476,8 +509,8 @@ export default function SettingsUsersPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {(roleOptions.length ? roleOptions : [...ASSIGNABLE_ROLES]).map((n) => (
-                    <SelectItem key={n} value={n} className="text-xs capitalize">
-                      {n}
+                    <SelectItem key={n} value={n} className="text-xs">
+                      {ROLE_LABELS[n] ?? n}
                     </SelectItem>
                   ))}
                 </SelectContent>

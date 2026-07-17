@@ -55,6 +55,12 @@ type Campaign = {
   pacing_sec: number;
   predictive_ratio: number;
   max_lines: number;
+  max_attempts: number;
+  caller_id?: string | null;
+  abandon_rate_max: number;
+  require_agent_available: boolean;
+  queue_id?: string | null;
+  queue?: { id: string; name: string } | null;
   channel: { id: string; name: string };
   _count?: { contacts: number; sessions?: number };
 };
@@ -538,6 +544,11 @@ function DialerAdminPanel() {
     queryFn: () => apiJson<Array<{ id: string; name: string; type: string }>>("/settings/channels"),
   });
 
+  const queuesQuery = useQuery({
+    queryKey: ["queues", "settings"],
+    queryFn: () => apiJson<Array<{ id: string; name: string }>>("/queues"),
+  });
+
   const voiceChannels = (channelsQuery.data ?? []).filter((c) => c.type === "VOICE");
 
   const createMut = useMutation({
@@ -581,6 +592,11 @@ function DialerAdminPanel() {
       pacing_sec: number;
       predictive_ratio: number;
       max_lines: number;
+      queue_id: string | null;
+      caller_id: string | null;
+      max_attempts: number;
+      abandon_rate_max: number;
+      require_agent_available: boolean;
     }) =>
       apiJson(`/dialer/campaigns/${encodeURIComponent(payload.id)}`, {
         method: "PATCH",
@@ -591,6 +607,11 @@ function DialerAdminPanel() {
           pacing_sec: payload.pacing_sec,
           predictive_ratio: payload.predictive_ratio,
           max_lines: payload.max_lines,
+          queue_id: payload.queue_id,
+          caller_id: payload.caller_id,
+          max_attempts: payload.max_attempts,
+          abandon_rate_max: payload.abandon_rate_max,
+          require_agent_available: payload.require_agent_available,
         }),
       }),
     onSuccess: () => {
@@ -805,6 +826,7 @@ function DialerAdminPanel() {
         <EditCampaignDialog
           campaign={editCampaign}
           voiceChannels={voiceChannels}
+          queues={queuesQuery.data ?? []}
           pending={updateMut.isPending}
           onClose={() => setEditCampaign(null)}
           onSave={(payload) => updateMut.mutate(payload)}
@@ -838,12 +860,14 @@ function DialerAdminPanel() {
 function EditCampaignDialog({
   campaign,
   voiceChannels,
+  queues,
   pending,
   onClose,
   onSave,
 }: {
   campaign: Campaign;
   voiceChannels: Array<{ id: string; name: string }>;
+  queues: Array<{ id: string; name: string }>;
   pending: boolean;
   onClose: () => void;
   onSave: (payload: {
@@ -854,6 +878,11 @@ function EditCampaignDialog({
     pacing_sec: number;
     predictive_ratio: number;
     max_lines: number;
+    queue_id: string | null;
+    caller_id: string | null;
+    max_attempts: number;
+    abandon_rate_max: number;
+    require_agent_available: boolean;
   }) => void;
 }) {
   const [name, setName] = useState(campaign.name);
@@ -862,6 +891,13 @@ function EditCampaignDialog({
   const [pacingSec, setPacingSec] = useState(String(campaign.pacing_sec));
   const [predictiveRatio, setPredictiveRatio] = useState(String(campaign.predictive_ratio));
   const [maxLines, setMaxLines] = useState(String(campaign.max_lines));
+  const [queueId, setQueueId] = useState(campaign.queue_id ?? "");
+  const [callerId, setCallerId] = useState(campaign.caller_id ?? "");
+  const [maxAttempts, setMaxAttempts] = useState(String(campaign.max_attempts ?? 3));
+  const [abandonRateMax, setAbandonRateMax] = useState(String(campaign.abandon_rate_max ?? 0.03));
+  const [requireAgentAvailable, setRequireAgentAvailable] = useState(
+    campaign.require_agent_available ?? true
+  );
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -934,6 +970,64 @@ function EditCampaignDialog({
               />
             </div>
           </div>
+          <div className="space-y-1">
+            <Label>Cola destino</Label>
+            <select
+              className="h-10 w-full rounded-md border px-2 text-sm bg-background"
+              value={queueId}
+              onChange={(e) => setQueueId(e.target.value)}
+            >
+              <option value="">Sin cola</option>
+              {queues.map((q) => (
+                <option key={q.id} value={q.id}>
+                  {q.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1">
+              <Label htmlFor="edit-caller">Caller ID</Label>
+              <Input
+                id="edit-caller"
+                value={callerId}
+                onChange={(e) => setCallerId(e.target.value)}
+                placeholder="Número saliente"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="edit-attempts">Máx. intentos</Label>
+              <Input
+                id="edit-attempts"
+                type="number"
+                min={1}
+                value={maxAttempts}
+                onChange={(e) => setMaxAttempts(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="edit-abandon">Abandono máx.</Label>
+              <Input
+                id="edit-abandon"
+                type="number"
+                step="0.01"
+                min={0}
+                max={1}
+                value={abandonRateMax}
+                onChange={(e) => setAbandonRateMax(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="edit-require-agent"
+              checked={requireAgentAvailable}
+              onCheckedChange={(c) => setRequireAgentAvailable(Boolean(c))}
+            />
+            <Label htmlFor="edit-require-agent" className="text-sm">
+              Requiere agente disponible (predictivo/progresivo)
+            </Label>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
@@ -950,6 +1044,11 @@ function EditCampaignDialog({
                 pacing_sec: Number(pacingSec) || 30,
                 predictive_ratio: Number(predictiveRatio) || 1.2,
                 max_lines: Number(maxLines) || 5,
+                queue_id: queueId || null,
+                caller_id: callerId.trim() || null,
+                max_attempts: Number(maxAttempts) || 3,
+                abandon_rate_max: Number(abandonRateMax) || 0.03,
+                require_agent_available: requireAgentAvailable,
               })
             }
           >

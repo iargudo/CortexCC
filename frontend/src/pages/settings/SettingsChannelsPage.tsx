@@ -16,6 +16,7 @@ import { Plus, Edit2, Settings, Zap, Eye, Copy } from "lucide-react";
 import { apiJson, getApiBase } from "@/lib/api";
 import { buildWhatsAppWebhookUrl } from "@/lib/webhookUrls";
 import { WhatsAppChannelFields } from "@/components/settings/WhatsAppChannelFields";
+import { WebChatChannelFields } from "@/components/settings/WebChatChannelFields";
 import {
   buildWhatsAppConfig,
   defaultWhatsAppForm,
@@ -24,6 +25,13 @@ import {
   whatsAppProviderLabel,
   type WhatsAppForm,
 } from "@/lib/whatsappChannelConfig";
+import {
+  buildWebChatConfig,
+  defaultWebChatForm,
+  parseWebChatForm,
+  validateWebChatForm,
+  type WebChatForm,
+} from "@/lib/webchatChannelConfig";
 
 type ApiChannel = {
   id: string;
@@ -123,6 +131,7 @@ function channelConfigLabel(type: ChannelType): string {
   if (type === "WHATSAPP") return "Configuración WhatsApp";
   if (type === "VOICE") return "Configuración de voz";
   if (type === "EMAIL") return "Configuración de email";
+  if (type === "WEBCHAT") return "Integración AgentHub (WebChat)";
   return "Config (JSON)";
 }
 
@@ -217,6 +226,8 @@ function ChannelConfigSection({
   onWaFormChange,
   emailForm,
   onEmailFormChange,
+  webForm,
+  onWebFormChange,
   cConfig,
   onCConfigChange,
 }: {
@@ -226,6 +237,8 @@ function ChannelConfigSection({
   onWaFormChange: (patch: Partial<WhatsAppForm> | ((prev: WhatsAppForm) => WhatsAppForm)) => void;
   emailForm: EmailForm;
   onEmailFormChange: (patch: Partial<EmailForm>) => void;
+  webForm: WebChatForm;
+  onWebFormChange: (patch: Partial<WebChatForm>) => void;
   cConfig: string;
   onCConfigChange: (value: string) => void;
 }) {
@@ -236,6 +249,8 @@ function ChannelConfigSection({
         <WhatsAppChannelFields form={waForm} onChange={onWaFormChange} channelId={channelId} />
       ) : channelType === "EMAIL" ? (
         <EmailChannelFields form={emailForm} onChange={onEmailFormChange} />
+      ) : channelType === "WEBCHAT" ? (
+        <WebChatChannelFields form={webForm} onChange={onWebFormChange} />
       ) : channelType === "VOICE" ? (
         <VoiceConfigPointer />
       ) : (
@@ -261,6 +276,7 @@ export default function SettingsChannelsPage() {
   const [cConfig, setCConfig] = useState("{}\n");
   const [waForm, setWaForm] = useState<WhatsAppForm>(defaultWhatsAppForm());
   const [emailForm, setEmailForm] = useState<EmailForm>(defaultEmailForm());
+  const [webForm, setWebForm] = useState<WebChatForm>(defaultWebChatForm());
 
   const { data: channels = [], isLoading, error } = useQuery({
     queryKey: ["settings", "channels"],
@@ -293,6 +309,16 @@ export default function SettingsChannelsPage() {
         payload.config = buildWhatsAppConfig(waForm);
       } else if (editing.type === "EMAIL") {
         payload.config = buildEmailConfig(emailForm);
+      } else if (editing.type === "WEBCHAT") {
+        const webError = validateWebChatForm(webForm);
+        if (webError) throw new Error(webError);
+        let previousConfig: unknown = {};
+        try {
+          previousConfig = JSON.parse(cConfig || "{}");
+        } catch {
+          previousConfig = {};
+        }
+        payload.config = buildWebChatConfig(webForm, previousConfig);
       } else if (editing.type !== "VOICE") {
         // VOICE no envía config: se gestiona en Telefonía y se preserva en el backend.
         try {
@@ -323,6 +349,10 @@ export default function SettingsChannelsPage() {
         config = buildWhatsAppConfig(waForm);
       } else if (cType === "EMAIL") {
         config = buildEmailConfig(emailForm);
+      } else if (cType === "WEBCHAT") {
+        const webError = validateWebChatForm(webForm);
+        if (webError) throw new Error(webError);
+        config = buildWebChatConfig(webForm);
       } else {
         try {
           config = JSON.parse(cConfig || "{}") as object;
@@ -387,6 +417,7 @@ export default function SettingsChannelsPage() {
             setCConfig("{}");
             setWaForm(defaultWhatsAppForm());
             setEmailForm(defaultEmailForm());
+            setWebForm(defaultWebChatForm());
             setCreateOpen(true);
           }}
         >
@@ -468,10 +499,12 @@ export default function SettingsChannelsPage() {
                           setCConfig(JSON.stringify(cfg, null, 2));
                           if (ch.type === "WHATSAPP") setWaForm(parseWhatsAppForm(cfg));
                           if (ch.type === "EMAIL") setEmailForm(parseEmailForm(cfg));
+                          if (ch.type === "WEBCHAT") setWebForm(parseWebChatForm(cfg));
                         } catch {
                           setCConfig("{}");
                           if (ch.type === "WHATSAPP") setWaForm(defaultWhatsAppForm());
                           if (ch.type === "EMAIL") setEmailForm(defaultEmailForm());
+                          if (ch.type === "WEBCHAT") setWebForm(defaultWebChatForm());
                         }
                         setEditOpen(true);
                       })();
@@ -567,6 +600,8 @@ export default function SettingsChannelsPage() {
                 onWaFormChange={setWaForm}
                 emailForm={emailForm}
                 onEmailFormChange={(patch) => setEmailForm((p) => ({ ...p, ...patch }))}
+                webForm={webForm}
+                onWebFormChange={(patch) => setWebForm((p) => ({ ...p, ...patch }))}
                 cConfig={cConfig}
                 onCConfigChange={setCConfig}
               />
@@ -634,6 +669,8 @@ export default function SettingsChannelsPage() {
               onWaFormChange={setWaForm}
               emailForm={emailForm}
               onEmailFormChange={(patch) => setEmailForm((p) => ({ ...p, ...patch }))}
+              webForm={webForm}
+              onWebFormChange={(patch) => setWebForm((p) => ({ ...p, ...patch }))}
               cConfig={cConfig}
               onCConfigChange={setCConfig}
             />

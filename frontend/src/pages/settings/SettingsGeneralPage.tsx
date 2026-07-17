@@ -13,7 +13,17 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Edit2, Trash2, Clock, MessageCircle, FileCheck, Calendar } from "lucide-react";
+import {
+  Plus,
+  Edit2,
+  Trash2,
+  Clock,
+  MessageCircle,
+  FileCheck,
+  Calendar,
+  Building2,
+  Tag as TagIcon,
+} from "lucide-react";
 import { apiJson } from "@/lib/api";
 import { BusinessHoursScheduleEditor } from "@/components/settings/BusinessHoursScheduleEditor";
 import {
@@ -27,6 +37,25 @@ import {
 } from "@/lib/businessHours";
 
 const CHANNELS: ChannelType[] = ["WHATSAPP", "EMAIL", "VOICE", "WEBCHAT", "TEAMS"];
+
+type OrganizationSettings = {
+  company_name: string | null;
+  timezone: string | null;
+  language: string | null;
+};
+
+type TagRow = {
+  id: string;
+  name: string;
+  color: string;
+  _count?: { contacts: number };
+};
+
+const LANGUAGE_OPTIONS = [
+  { value: "es", label: "Español" },
+  { value: "en", label: "English" },
+  { value: "pt", label: "Português" },
+];
 
 export default function SettingsGeneralPage() {
   const qc = useQueryClient();
@@ -48,6 +77,14 @@ export default function SettingsGeneralPage() {
     queryKey: ["settings", "business-hours"],
     queryFn: () => apiJson<BusinessHours[]>("/settings/business-hours"),
   });
+  const orgQuery = useQuery({
+    queryKey: ["settings", "general"],
+    queryFn: () => apiJson<OrganizationSettings | null>("/settings/general"),
+  });
+  const tagsQuery = useQuery({
+    queryKey: ["settings", "tags"],
+    queryFn: () => apiJson<TagRow[]>("/settings/tags"),
+  });
 
   const [dispOpen, setDispOpen] = useState(false);
   const [editingDisp, setEditingDisp] = useState<Disposition | null>(null);
@@ -55,10 +92,17 @@ export default function SettingsGeneralPage() {
   const [dCat, setDCat] = useState("general");
   const [dNote, setDNote] = useState(false);
   const [dActive, setDActive] = useState(true);
+  const [dConversion, setDConversion] = useState(false);
 
   const dispSave = useMutation({
     mutationFn: async () => {
-      const body = { name: dName.trim(), category: dCat, requires_note: dNote, is_active: dActive };
+      const body = {
+        name: dName.trim(),
+        category: dCat,
+        requires_note: dNote,
+        is_active: dActive,
+        is_conversion: dConversion,
+      };
       if (editingDisp) {
         await apiJson(`/settings/dispositions/${editingDisp.id}`, { method: "PUT", body: JSON.stringify(body) });
       } else {
@@ -169,12 +213,19 @@ export default function SettingsGeneralPage() {
   const [bhName, setBhName] = useState("");
   const [bhTz, setBhTz] = useState("America/Guayaquil");
   const [bhSchedule, setBhSchedule] = useState<WeekSchedule>(DEFAULT_SCHEDULE);
+  const [bhHolidays, setBhHolidays] = useState("");
 
   const bhSave = useMutation({
     mutationFn: async () => {
       const scheduleError = validateSchedule(bhSchedule);
       if (scheduleError) throw new Error(scheduleError);
-      const body = { name: bhName.trim(), timezone: bhTz, schedule: bhSchedule };
+      const holidays = bhHolidays
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const invalidDate = holidays.find((d) => !/^\d{4}-\d{2}-\d{2}$/.test(d));
+      if (invalidDate) throw new Error(`Fecha de feriado inválida: ${invalidDate} (usa AAAA-MM-DD)`);
+      const body = { name: bhName.trim(), timezone: bhTz, schedule: bhSchedule, holidays };
       if (editingBh) {
         await apiJson(`/settings/business-hours/${editingBh.id}`, { method: "PUT", body: JSON.stringify(body) });
       } else {
@@ -189,10 +240,71 @@ export default function SettingsGeneralPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const [orgName, setOrgName] = useState("");
+  const [orgTz, setOrgTz] = useState("America/Guayaquil");
+  const [orgLang, setOrgLang] = useState("es");
+  const [orgHydrated, setOrgHydrated] = useState(false);
+
+  if (!orgHydrated && orgQuery.data) {
+    setOrgName(orgQuery.data.company_name ?? "");
+    setOrgTz(orgQuery.data.timezone ?? "America/Guayaquil");
+    setOrgLang(orgQuery.data.language ?? "es");
+    setOrgHydrated(true);
+  }
+
+  const orgSave = useMutation({
+    mutationFn: () =>
+      apiJson("/settings/general", {
+        method: "PUT",
+        body: JSON.stringify({
+          company_name: orgName.trim(),
+          timezone: orgTz,
+          language: orgLang,
+        }),
+      }),
+    onSuccess: () => {
+      invalidate(["settings", "general"]);
+      toast.success("Organización actualizada");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const [tagOpen, setTagOpen] = useState(false);
+  const [editingTag, setEditingTag] = useState<TagRow | null>(null);
+  const [tagName, setTagName] = useState("");
+  const [tagColor, setTagColor] = useState("#6B7280");
+
+  const tagSave = useMutation({
+    mutationFn: async () => {
+      const body = { name: tagName.trim(), color: tagColor };
+      if (editingTag) {
+        await apiJson(`/settings/tags/${editingTag.id}`, { method: "PUT", body: JSON.stringify(body) });
+      } else {
+        await apiJson("/settings/tags", { method: "POST", body: JSON.stringify(body) });
+      }
+    },
+    onSuccess: () => {
+      invalidate(["settings", "tags"]);
+      toast.success(editingTag ? "Etiqueta actualizada" : "Etiqueta creada");
+      setTagOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const tagDel = useMutation({
+    mutationFn: (id: string) => apiJson(`/settings/tags/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      invalidate(["settings", "tags"]);
+      toast.success("Etiqueta eliminada");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const dispositions = dispQuery.data ?? [];
   const slaPolicies = slaQuery.data ?? [];
   const quickReplies = qrQuery.data ?? [];
   const businessHours = bhQuery.data ?? [];
+  const tags = tagsQuery.data ?? [];
 
   const err = dispQuery.error || slaQuery.error || qrQuery.error || bhQuery.error;
 
@@ -201,8 +313,11 @@ export default function SettingsGeneralPage() {
       <h1 className="text-xl font-bold">Configuración general</h1>
       {err && <p className="text-sm text-destructive">{(err as Error).message}</p>}
 
-      <Tabs defaultValue="dispositions">
+      <Tabs defaultValue="organization">
         <TabsList>
+          <TabsTrigger value="organization" className="gap-1">
+            <Building2 size={12} /> Organización
+          </TabsTrigger>
           <TabsTrigger value="dispositions" className="gap-1">
             <FileCheck size={12} /> Disposiciones
           </TabsTrigger>
@@ -215,7 +330,72 @@ export default function SettingsGeneralPage() {
           <TabsTrigger value="hours" className="gap-1">
             <Calendar size={12} /> Horarios
           </TabsTrigger>
+          <TabsTrigger value="tags" className="gap-1">
+            <TagIcon size={12} /> Etiquetas
+          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="organization" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Datos de la organización</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 max-w-lg">
+              {orgQuery.isLoading && <p className="text-sm text-muted-foreground">Cargando…</p>}
+              <div>
+                <Label className="text-xs">Nombre de la empresa</Label>
+                <Input
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                  className="h-8 text-sm"
+                  placeholder="Mi Empresa"
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Zona horaria</Label>
+                <Select value={orgTz} onValueChange={setOrgTz}>
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TIMEZONE_OPTIONS.some((tz) => tz.value === orgTz) ? null : (
+                      <SelectItem value={orgTz}>{orgTz}</SelectItem>
+                    )}
+                    {TIMEZONE_OPTIONS.map((tz) => (
+                      <SelectItem key={tz.value} value={tz.value}>
+                        {tz.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Idioma</Label>
+                <Select value={orgLang} onValueChange={setOrgLang}>
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGE_OPTIONS.map((l) => (
+                      <SelectItem key={l.value} value={l.value}>
+                        {l.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  onClick={() => orgSave.mutate()}
+                  disabled={orgSave.isPending || !orgName.trim()}
+                >
+                  Guardar
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="dispositions" className="mt-4 space-y-4">
           <div className="flex justify-end">
@@ -229,6 +409,7 @@ export default function SettingsGeneralPage() {
                 setDCat("general");
                 setDNote(false);
                 setDActive(true);
+                setDConversion(false);
                 setDispOpen(true);
               }}
             >
@@ -244,6 +425,7 @@ export default function SettingsGeneralPage() {
                     <th className="text-left p-3 font-medium">Nombre</th>
                     <th className="text-left p-3 font-medium">Categoría</th>
                     <th className="text-center p-3 font-medium">Requiere nota</th>
+                    <th className="text-center p-3 font-medium">Conversión</th>
                     <th className="text-center p-3 font-medium">Estado</th>
                     <th className="text-center p-3 font-medium">Acciones</th>
                   </tr>
@@ -258,6 +440,15 @@ export default function SettingsGeneralPage() {
                         </Badge>
                       </td>
                       <td className="text-center p-3">{d.requires_note ? "Sí" : "No"}</td>
+                      <td className="text-center p-3">
+                        {d.is_conversion ? (
+                          <Badge variant="default" className="text-[10px]">
+                            Sí
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">No</span>
+                        )}
+                      </td>
                       <td className="text-center p-3">
                         <Badge variant={d.is_active ? "default" : "secondary"} className="text-[10px]">
                           {d.is_active ? "Activa" : "Inactiva"}
@@ -275,6 +466,7 @@ export default function SettingsGeneralPage() {
                               setDCat(d.category);
                               setDNote(d.requires_note);
                               setDActive(d.is_active);
+                              setDConversion(d.is_conversion);
                               setDispOpen(true);
                             }}
                           >
@@ -474,6 +666,7 @@ export default function SettingsGeneralPage() {
                 setBhName("");
                 setBhTz("America/Guayaquil");
                 setBhSchedule(structuredClone(DEFAULT_SCHEDULE));
+                setBhHolidays("");
                 setBhOpen(true);
               }}
             >
@@ -496,6 +689,7 @@ export default function SettingsGeneralPage() {
                         setBhName(bh.name);
                         setBhTz(bh.timezone);
                         setBhSchedule(normalizeSchedule(bh.schedule));
+                        setBhHolidays(Array.isArray(bh.holidays) ? bh.holidays.join("\n") : "");
                         setBhOpen(true);
                       }}
                     >
@@ -519,6 +713,80 @@ export default function SettingsGeneralPage() {
               </Card>
             ))}
           </div>
+        </TabsContent>
+
+        <TabsContent value="tags" className="mt-4 space-y-4">
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              className="gap-1"
+              variant="outline"
+              onClick={() => {
+                setEditingTag(null);
+                setTagName("");
+                setTagColor("#6B7280");
+                setTagOpen(true);
+              }}
+            >
+              <Plus size={14} /> Nueva etiqueta
+            </Button>
+          </div>
+          <Card>
+            <CardContent className="p-0">
+              {tagsQuery.isLoading && <p className="p-4 text-sm text-muted-foreground">Cargando…</p>}
+              {!tagsQuery.isLoading && tags.length === 0 && (
+                <p className="p-4 text-sm text-muted-foreground">No hay etiquetas todavía.</p>
+              )}
+              <table className="w-full text-sm">
+                <tbody>
+                  {tags.map((t) => (
+                    <tr key={t.id} className="border-b last:border-0">
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="inline-block h-3 w-3 rounded-full border"
+                            style={{ backgroundColor: t.color }}
+                          />
+                          <span className="font-medium">{t.name}</span>
+                        </div>
+                      </td>
+                      <td className="p-3 text-muted-foreground">
+                        {t._count?.contacts ?? 0} contacto{(t._count?.contacts ?? 0) === 1 ? "" : "s"}
+                      </td>
+                      <td className="p-3 text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => {
+                              setEditingTag(t);
+                              setTagName(t.name);
+                              setTagColor(t.color);
+                              setTagOpen(true);
+                            }}
+                          >
+                            <Edit2 size={12} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive"
+                            disabled={tagDel.isPending}
+                            onClick={() => {
+                              if (window.confirm(`¿Eliminar «${t.name}»?`)) tagDel.mutate(t.id);
+                            }}
+                          >
+                            <Trash2 size={12} />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 
@@ -548,6 +816,20 @@ export default function SettingsGeneralPage() {
                 Activa
               </Label>
             </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="dconv"
+                checked={dConversion}
+                onCheckedChange={(c) => setDConversion(Boolean(c))}
+              />
+              <Label htmlFor="dconv" className="text-xs">
+                Cuenta como conversión (venta)
+              </Label>
+            </div>
+            <p className="text-[11px] text-muted-foreground -mt-1">
+              Las disposiciones marcadas como conversión alimentan las métricas de ventas y el
+              enrutamiento por prioridad (PRIORITY_BASED).
+            </p>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDispOpen(false)}>
@@ -647,6 +929,44 @@ export default function SettingsGeneralPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={tagOpen} onOpenChange={setTagOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{editingTag ? "Editar etiqueta" : "Nueva etiqueta"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Nombre</Label>
+              <Input value={tagName} onChange={(e) => setTagName(e.target.value)} className="h-8 text-sm" />
+            </div>
+            <div>
+              <Label className="text-xs">Color</Label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={tagColor}
+                  onChange={(e) => setTagColor(e.target.value)}
+                  className="h-8 w-12 rounded border bg-background p-1"
+                />
+                <Input
+                  value={tagColor}
+                  onChange={(e) => setTagColor(e.target.value)}
+                  className="h-8 text-sm font-mono"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setTagOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => tagSave.mutate()} disabled={!tagName.trim() || tagSave.isPending}>
+              Guardar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={bhOpen} onOpenChange={setBhOpen}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
@@ -676,6 +996,18 @@ export default function SettingsGeneralPage() {
               </Select>
             </div>
             <BusinessHoursScheduleEditor value={bhSchedule} onChange={setBhSchedule} />
+            <div>
+              <Label className="text-xs">Días feriados (uno por línea, formato AAAA-MM-DD)</Label>
+              <Textarea
+                value={bhHolidays}
+                onChange={(e) => setBhHolidays(e.target.value)}
+                className="min-h-[72px] text-xs font-mono"
+                placeholder={"2026-01-01\n2026-05-01\n2026-12-25"}
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                En estas fechas la cola se considera fuera de horario todo el día.
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setBhOpen(false)}>

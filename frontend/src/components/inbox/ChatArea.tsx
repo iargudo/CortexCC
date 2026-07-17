@@ -56,6 +56,7 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
     rejectMut.reset();
     holdMut.reset();
     resumeMut.reset();
+    returnToBotMut.reset();
     sendMut.reset();
     emailMut.reset();
   }, [cid]);
@@ -74,6 +75,15 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
       toast.success("Conversación retomada");
     },
     onError: (e: Error) => toast.error(e.message),
+  });
+  const returnToBotMut = useMutation({
+    mutationFn: () => apiJson(`/conversations/${cid}/return-to-bot`, { method: "POST" }),
+    onSuccess: () => {
+      bump();
+      toast.success("Conversación devuelta al bot");
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof Error ? e.message : "No se pudo devolver al bot"),
   });
   const sendMut = useMutation({
     mutationFn: (body: { content: string; is_internal: boolean }) =>
@@ -336,6 +346,19 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
               aria-label="Espera"
             >
               <Pause size={14} />
+            </Button>
+          )}
+          {(conversation.channel === "WEBCHAT" || conversation.channel === "WHATSAPP") && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={returnToBotMut.isPending || terminalStatus}
+              onClick={() => returnToBotMut.mutate()}
+              title="Devolver a bot"
+              aria-label="Devolver a bot"
+            >
+              <Bot size={14} />
             </Button>
           )}
           <Button

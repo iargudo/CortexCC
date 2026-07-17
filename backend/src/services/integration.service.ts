@@ -61,8 +61,19 @@ async function upsertContact(input: {
   });
 }
 
-async function resolveChannel(channelType: string) {
+async function resolveChannel(channelType: string, channelId?: string) {
   const type = mapChannelType(channelType);
+  // Enrutamiento explícito: cuando un tenant tiene varios canales del mismo tipo
+  // (p. ej. un WhatsApp directo y otro vía AgentHub), la escalación puede indicar
+  // el canal exacto por id. Se valida que el tipo coincida.
+  if (channelId?.trim()) {
+    const ch = await getPrisma().channel.findUnique({ where: { id: channelId.trim() } });
+    if (!ch) throw new HttpError(404, `Channel ${channelId} not found`);
+    if (ch.type !== type) {
+      throw new HttpError(400, `Channel ${channelId} is ${ch.type}, expected ${type}`);
+    }
+    return ch;
+  }
   const ch = await getPrisma().channel.findFirst({ where: { type } });
   if (!ch) throw new HttpError(503, `No channel configured for ${type}`);
   return ch;
@@ -165,6 +176,7 @@ function renderTemplate(input: string, data: Record<string, unknown>): string {
 export async function handleGenericEscalation(body: {
   source_system: string;
   channel_type: string;
+  channel_id?: string;
   contact: { phone?: string; name?: string; external_id?: string };
   event_type?: string;
   conversation_ref_id?: string;
@@ -175,7 +187,7 @@ export async function handleGenericEscalation(body: {
 }) {
   const sourceSystem = normalizeSourceToken(body.source_system);
   const eventType = body.event_type ? normalizeSourceToken(body.event_type) : "escalation";
-  const channel = await resolveChannel(body.channel_type);
+  const channel = await resolveChannel(body.channel_type, body.channel_id);
   const contact = await upsertContact({
     phone: body.contact.phone,
     name: body.contact.name,

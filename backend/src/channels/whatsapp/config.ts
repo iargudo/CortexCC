@@ -24,14 +24,42 @@ const dialog360Schema = z.object({
 
 const whatsappConfigSchema = z.discriminatedUnion("provider", [ultraMsgSchema, twilioSchema, dialog360Schema]);
 
+// Handoff relay: cuando el número lo gestiona AgentHub, el canal no lleva
+// credenciales de proveedor sino este bloque para relayar respuestas.
+const agentHubRelaySchema = z.object({
+  baseUrl: z.string().url(),
+  apiPrefix: z.string().min(1).optional(),
+  apiKey: z.string().min(1),
+});
+
 export type WhatsAppChannelConfig = z.infer<typeof whatsappConfigSchema>;
 
 export function parseWhatsAppChannelConfig(raw: unknown): WhatsAppChannelConfig {
   return whatsappConfigSchema.parse(raw);
 }
 
+function formatIssues(prefix: string, out: z.SafeParseError<unknown>): string {
+  return out.error.issues.map((i) => `${prefix}${i.path.join(".") || "config"}: ${i.message}`).join("; ");
+}
+
 export function getWhatsAppConfigValidationError(raw: unknown): string | undefined {
+  const obj = (raw ?? {}) as Record<string, unknown>;
+  const hasAgentHub = obj.agenthub != null && typeof obj.agenthub === "object";
+  const hasProvider = typeof obj.provider === "string" && obj.provider.length > 0;
+
+  // Modo AgentHub (handoff) sin proveedor: validar solo el bloque de relay.
+  if (hasAgentHub && !hasProvider) {
+    const ah = agentHubRelaySchema.safeParse(obj.agenthub);
+    if (ah.success) return undefined;
+    return formatIssues("agenthub.", ah as z.SafeParseError<unknown>);
+  }
+
   const out = whatsappConfigSchema.safeParse(raw);
-  if (out.success) return undefined;
-  return out.error.issues.map((issue) => `${issue.path.join(".") || "config"}: ${issue.message}`).join("; ");
+  if (!out.success) return formatIssues("", out as z.SafeParseError<unknown>);
+  // Proveedor válido: si además trae relay AgentHub, validarlo también.
+  if (hasAgentHub) {
+    const ah = agentHubRelaySchema.safeParse(obj.agenthub);
+    if (!ah.success) return formatIssues("agenthub.", ah as z.SafeParseError<unknown>);
+  }
+  return undefined;
 }

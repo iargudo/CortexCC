@@ -1,6 +1,11 @@
 export type WhatsAppProvider = "ultramsg" | "twilio" | "360dialog";
 
+// "direct": CortexCC es dueño del número y habla directo con el proveedor.
+// "agenthub": el número lo gestiona AgentHub; CortexCC solo relaya (handoff).
+export type WhatsAppMode = "direct" | "agenthub";
+
 export type WhatsAppForm = {
+  mode: WhatsAppMode;
   provider: WhatsAppProvider;
   ultraInstanceId: string;
   ultraToken: string;
@@ -12,6 +17,9 @@ export type WhatsAppForm = {
   dialogApiKey: string;
   dialogPhoneNumberId: string;
   dialogBaseUrl: string;
+  agentHubBaseUrl: string;
+  agentHubApiPrefix: string;
+  agentHubApiKey: string;
 };
 
 export const WHATSAPP_PROVIDER_OPTIONS: { value: WhatsAppProvider; label: string; description: string }[] = [
@@ -34,6 +42,7 @@ export const WHATSAPP_PROVIDER_OPTIONS: { value: WhatsAppProvider; label: string
 
 export function defaultWhatsAppForm(): WhatsAppForm {
   return {
+    mode: "direct",
     provider: "ultramsg",
     ultraInstanceId: "",
     ultraToken: "",
@@ -45,6 +54,9 @@ export function defaultWhatsAppForm(): WhatsAppForm {
     dialogApiKey: "",
     dialogPhoneNumberId: "",
     dialogBaseUrl: "https://waba-v2.360dialog.io",
+    agentHubBaseUrl: "",
+    agentHubApiPrefix: "/api/v1",
+    agentHubApiKey: "",
   };
 }
 
@@ -66,10 +78,33 @@ export function parseWhatsAppForm(config: unknown): WhatsAppForm {
   } else if (form.provider === "360dialog") {
     form.dialogBaseUrl = String(c.baseUrl ?? form.dialogBaseUrl);
   }
+  const ah = c.agenthub;
+  if (ah && typeof ah === "object") {
+    const rec = ah as Record<string, unknown>;
+    form.mode = "agenthub";
+    form.agentHubBaseUrl = String(rec.baseUrl ?? "");
+    form.agentHubApiPrefix = String(rec.apiPrefix ?? "/api/v1") || "/api/v1";
+    form.agentHubApiKey = String(rec.apiKey ?? "");
+  }
   return form;
 }
 
+function buildAgentHubBlock(form: WhatsAppForm): { agenthub: { baseUrl: string; apiPrefix: string; apiKey: string } } {
+  return {
+    agenthub: {
+      baseUrl: form.agentHubBaseUrl.trim(),
+      apiPrefix: form.agentHubApiPrefix.trim() || "/api/v1",
+      apiKey: form.agentHubApiKey.trim(),
+    },
+  };
+}
+
 export function buildWhatsAppConfig(form: WhatsAppForm): object {
+  // Modo AgentHub (handoff): el número lo gestiona AgentHub, no se guardan
+  // credenciales de proveedor en CortexCC.
+  if (form.mode === "agenthub") {
+    return buildAgentHubBlock(form);
+  }
   if (form.provider === "ultramsg") {
     return {
       provider: "ultramsg",
@@ -96,6 +131,12 @@ export function buildWhatsAppConfig(form: WhatsAppForm): object {
 }
 
 export function validateWhatsAppForm(form: WhatsAppForm): string | null {
+  if (form.mode === "agenthub") {
+    if (!form.agentHubBaseUrl.trim()) return "Base URL de AgentHub es obligatoria";
+    if (!/^https?:\/\//i.test(form.agentHubBaseUrl.trim())) return "Base URL de AgentHub debe ser una URL válida (http/https)";
+    if (!form.agentHubApiKey.trim()) return "API Key de AgentHub es obligatoria";
+    return null;
+  }
   if (form.provider === "ultramsg") {
     if (!form.ultraInstanceId.trim()) return "Instance ID es obligatorio para UltraMsg";
     if (!form.ultraToken.trim()) return "Token es obligatorio para UltraMsg";
@@ -112,5 +153,6 @@ export function validateWhatsAppForm(form: WhatsAppForm): string | null {
 }
 
 export function whatsAppProviderLabel(provider: string | undefined): string {
+  if (provider === "agenthub") return "AgentHub (handoff)";
   return WHATSAPP_PROVIDER_OPTIONS.find((p) => p.value === provider)?.label ?? "UltraMsg";
 }

@@ -114,6 +114,26 @@ function conversationViewer(req: Express.Request) {
 }
 
 /**
+ * Normaliza y deduplica la lista de skills requeridos de una cola (QueueSkill).
+ * min_level se acota a 1..10; mandatory por defecto false.
+ */
+function normalizeQueueSkills(
+  input: { skill_id: string; min_level?: number; mandatory?: boolean }[] | undefined
+): { skill_id: string; min_level: number; mandatory: boolean }[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: { skill_id: string; min_level: number; mandatory: boolean }[] = [];
+  for (const s of input) {
+    const id = typeof s?.skill_id === "string" ? s.skill_id.trim() : "";
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const level = Math.min(10, Math.max(1, Math.round(Number(s.min_level ?? 1)) || 1));
+    out.push({ skill_id: id, min_level: level, mandatory: Boolean(s.mandatory) });
+  }
+  return out;
+}
+
+/**
  * Team filter for reports: a coordinator is limited to their teams; a global
  * supervisor/admin may optionally filter by `?team_id`. Returns null = no filter.
  */
@@ -245,6 +265,7 @@ export function buildApiRouter(app: Express): Router {
       const body = req.body as {
         source_system?: string;
         channel_type?: string;
+        channel_id?: string;
         contact?: { phone?: string; name?: string; external_id?: string };
       };
       if (!body.source_system?.trim()) throw new HttpError(400, "source_system required");
@@ -255,6 +276,7 @@ export function buildApiRouter(app: Express): Router {
       const out = await integrationService.handleGenericEscalation({
         source_system: body.source_system,
         channel_type: body.channel_type,
+        channel_id: body.channel_id,
         contact: body.contact,
         event_type: (req.body as { event_type?: string }).event_type,
         conversation_ref_id: (req.body as { conversation_ref_id?: string }).conversation_ref_id,
@@ -264,6 +286,59 @@ export function buildApiRouter(app: Express): Router {
         priority: (req.body as { priority?: number }).priority,
       });
       res.status(201).json(out);
+    })
+  );
+
+  // Inbound from external system (AgentHub) while conversation is under human control.
+  // Locates the conversation by source_ref_id (works for webchat and WhatsApp-via-AgentHub),
+  // inserts a CONTACT message and notifies the console. Requires x-tenant-key (tenantMiddleware)
+  // and the integration API key.
+  r.post(
+    "/integrations/inbound",
+    integrationApiKeyMiddleware,
+    asyncHandler(async (req, res) => {
+      const body = req.body as {
+        conversation_ref_id?: string;
+        content?: string;
+        content_type?: string;
+        external_message_id?: string;
+        contact?: { name?: string };
+      };
+      if (!body.conversation_ref_id?.trim()) throw new HttpError(400, "conversation_ref_id required");
+      if (body.content == null && !body.external_message_id) {
+        throw new HttpError(400, "content required");
+      }
+
+      const result = await inboundService.attachInboundBySourceRef({
+        source_ref_id: body.conversation_ref_id,
+        content: body.content ?? "",
+        content_type: body.content_type,
+        external_message_id: body.external_message_id,
+        contact: body.contact,
+      });
+
+      if (!result.deduped) {
+        const tenantKey = getCurrentTenantKey();
+        const io = getIo(app);
+        io?.to(conversationRoom(tenantKey, result.conversation_id)).emit("message:new", {
+          conversationId: result.conversation_id,
+        });
+        const assignments = await getPrisma().conversationAssignment.findMany({
+          where: { conversation_id: result.conversation_id, ended_at: null },
+          select: { user_id: true },
+        });
+        for (const a of assignments) {
+          io?.to(userRoom(tenantKey, a.user_id)).emit("message:new", {
+            conversationId: result.conversation_id,
+          });
+        }
+      }
+
+      res.status(201).json({
+        conversation_id: result.conversation_id,
+        message_id: result.message_id,
+        deduped: result.deduped,
+      });
     })
   );
 
@@ -999,6 +1074,16 @@ export function buildApiRouter(app: Express): Router {
     })
   );
 
+  r.post(
+    "/conversations/:id/return-to-bot",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      res.json(
+        await conversationService.returnConversationToBot(routeParam(req, "id"), conversationViewer(req))
+      );
+    })
+  );
+
   r.get(
     "/conversations/:id/messages",
     requireAuth,
@@ -1268,6 +1353,35 @@ export function buildApiRouter(app: Express): Router {
           assignments: { where: { ended_at: null } },
         },
       });
+
+      // Credit model aligned with resolveConversation / RoutingEngine: one resolved
+      // conversation per agent that held an assignment when it was closed today.
+      const sod = new Date();
+      sod.setHours(0, 0, 0, 0);
+      const userIds = users.map((u) => u.id);
+      const resolvedTodayByUser = new Map<string, Set<string>>();
+      if (userIds.length > 0) {
+        const resolvedAssignments = await getPrisma().conversationAssignment.findMany({
+          where: {
+            user_id: { in: userIds },
+            ended_at: { not: null },
+            conversation: {
+              status: "RESOLVED",
+              resolved_at: { gte: sod },
+            },
+          },
+          select: { user_id: true, conversation_id: true },
+        });
+        for (const row of resolvedAssignments) {
+          let set = resolvedTodayByUser.get(row.user_id);
+          if (!set) {
+            set = new Set();
+            resolvedTodayByUser.set(row.user_id, set);
+          }
+          set.add(row.conversation_id);
+        }
+      }
+
       res.json(
         users.map((u) => ({
           id: u.id,
@@ -1279,7 +1393,7 @@ export function buildApiRouter(app: Express): Router {
           active_conversations: u.assignments.length,
           skills: u.skills.map((s) => ({ name: s.skill.name, proficiency: s.proficiency })),
           teams: u.teams.map((t) => t.team.name),
-          resolved_today: 0,
+          resolved_today: resolvedTodayByUser.get(u.id)?.size ?? 0,
           status_since: u.status_since.toISOString(),
         }))
       );
@@ -1355,7 +1469,13 @@ export function buildApiRouter(app: Express): Router {
       const teamFilter = scope.isSupervisor && !scope.global ? { team_id: { in: scope.teamIds } } : undefined;
       const queues = await getPrisma().queue.findMany({
         where: teamFilter,
-        include: { team: true, _count: { select: { conversations: { where: { status: "WAITING" } } } } },
+        include: {
+          team: true,
+          channels: { select: { channel_id: true } },
+          skills_required: { select: { skill_id: true, min_level: true, mandatory: true } },
+          business_hours: { select: { id: true, name: true } },
+          _count: { select: { conversations: { where: { status: "WAITING" } } } },
+        },
       });
       const queueIds = queues.map((q) => q.id);
       const teamIds = [...new Set(queues.map((q) => q.team_id).filter(Boolean))] as string[];
@@ -1436,6 +1556,20 @@ export function buildApiRouter(app: Express): Router {
             team_id: q.team_id,
             team: q.team?.name,
             routing_strategy: q.routing_strategy,
+            rotation_group: q.rotation_group,
+            rotation_order: q.rotation_order,
+            channel_ids: q.channels.map((c) => c.channel_id),
+            business_hours_id: q.business_hours_id,
+            business_hours: q.business_hours ? { id: q.business_hours.id, name: q.business_hours.name } : null,
+            out_of_hours_message: q.out_of_hours_message,
+            overflow_queue_id: q.overflow_queue_id,
+            overflow_message: q.overflow_message,
+            sla_policy_id: q.sla_policy_id,
+            skills: q.skills_required.map((s) => ({
+              skill_id: s.skill_id,
+              min_level: s.min_level,
+              mandatory: s.mandatory,
+            })),
             waiting: map.get(q.id)?.waiting ?? 0,
             active: map.get(q.id)?.active ?? 0,
             agents_online: q.team_id ? onlineByTeam.get(q.team_id) ?? 0 : 0,
@@ -1527,10 +1661,27 @@ export function buildApiRouter(app: Express): Router {
         team?: string;
         routing_strategy?: string;
         max_wait_seconds?: number;
+        rotation_group?: string | null;
+        rotation_order?: number | null;
+        channel_ids?: string[];
+        business_hours_id?: string | null;
+        out_of_hours_message?: string | null;
+        overflow_queue_id?: string | null;
+        overflow_message?: string | null;
+        sla_policy_id?: string | null;
+        skills?: { skill_id: string; min_level?: number; mandatory?: boolean }[];
       };
       const team = body.team
         ? await getPrisma().team.findFirst({ where: { name: body.team } })
         : null;
+      const rotationGroup =
+        typeof body.rotation_group === "string" && body.rotation_group.trim()
+          ? body.rotation_group.trim()
+          : null;
+      const channelIds = Array.isArray(body.channel_ids)
+        ? [...new Set(body.channel_ids.filter((id) => typeof id === "string" && id.trim()))]
+        : [];
+      const skills = normalizeQueueSkills(body.skills);
       const q = await getPrisma().queue.create({
         data: {
           name: body.name,
@@ -1538,8 +1689,43 @@ export function buildApiRouter(app: Express): Router {
           team_id: team?.id,
           routing_strategy: (body.routing_strategy as never) ?? "ROUND_ROBIN",
           max_wait_seconds: body.max_wait_seconds ?? 300,
+          rotation_group: rotationGroup,
+          rotation_order:
+            rotationGroup && typeof body.rotation_order === "number" ? body.rotation_order : null,
+          business_hours_id:
+            typeof body.business_hours_id === "string" && body.business_hours_id.trim()
+              ? body.business_hours_id.trim()
+              : null,
+          out_of_hours_message:
+            typeof body.out_of_hours_message === "string" && body.out_of_hours_message.trim()
+              ? body.out_of_hours_message.trim()
+              : null,
+          overflow_queue_id:
+            typeof body.overflow_queue_id === "string" && body.overflow_queue_id.trim()
+              ? body.overflow_queue_id.trim()
+              : null,
+          overflow_message:
+            typeof body.overflow_message === "string" && body.overflow_message.trim()
+              ? body.overflow_message.trim()
+              : null,
+          sla_policy_id:
+            typeof body.sla_policy_id === "string" && body.sla_policy_id.trim()
+              ? body.sla_policy_id.trim()
+              : null,
         },
       });
+      if (channelIds.length > 0) {
+        await getPrisma().queueChannel.createMany({
+          data: channelIds.map((channel_id) => ({ queue_id: q.id, channel_id })),
+          skipDuplicates: true,
+        });
+      }
+      if (skills.length > 0) {
+        await getPrisma().queueSkill.createMany({
+          data: skills.map((s) => ({ queue_id: q.id, ...s })),
+          skipDuplicates: true,
+        });
+      }
       res.status(201).json(q);
     })
   );
@@ -1549,7 +1735,115 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
-      const q = await getPrisma().queue.update({ where: { id: routeParam(req, "id") }, data: req.body });
+      const body = req.body as {
+        name?: string;
+        description?: string | null;
+        team_id?: string | null;
+        routing_strategy?: string;
+        max_wait_seconds?: number;
+        is_active?: boolean;
+        rotation_group?: string | null;
+        rotation_order?: number | null;
+        channel_ids?: string[];
+        business_hours_id?: string | null;
+        out_of_hours_message?: string | null;
+        overflow_queue_id?: string | null;
+        overflow_message?: string | null;
+        sla_policy_id?: string | null;
+        skills?: { skill_id: string; min_level?: number; mandatory?: boolean }[];
+      };
+      const data: Prisma.QueueUpdateInput = {};
+      if (body.name !== undefined) data.name = body.name;
+      if (body.description !== undefined) data.description = body.description;
+      if (body.team_id !== undefined)
+        data.team = body.team_id
+          ? { connect: { id: body.team_id } }
+          : { disconnect: true };
+      if (body.routing_strategy !== undefined)
+        data.routing_strategy = body.routing_strategy as never;
+      if (body.max_wait_seconds !== undefined) data.max_wait_seconds = body.max_wait_seconds;
+      if (body.is_active !== undefined) data.is_active = body.is_active;
+      if (body.rotation_group !== undefined) {
+        const group =
+          typeof body.rotation_group === "string" && body.rotation_group.trim()
+            ? body.rotation_group.trim()
+            : null;
+        data.rotation_group = group;
+        // Sin grupo, el orden pierde sentido.
+        if (!group) data.rotation_order = null;
+      }
+      if (body.rotation_order !== undefined && data.rotation_order === undefined)
+        data.rotation_order =
+          typeof body.rotation_order === "number" ? body.rotation_order : null;
+      if (body.business_hours_id !== undefined) {
+        const bhId =
+          typeof body.business_hours_id === "string" && body.business_hours_id.trim()
+            ? body.business_hours_id.trim()
+            : null;
+        data.business_hours = bhId ? { connect: { id: bhId } } : { disconnect: true };
+      }
+      if (body.out_of_hours_message !== undefined)
+        data.out_of_hours_message =
+          typeof body.out_of_hours_message === "string" && body.out_of_hours_message.trim()
+            ? body.out_of_hours_message.trim()
+            : null;
+      if (body.overflow_message !== undefined)
+        data.overflow_message =
+          typeof body.overflow_message === "string" && body.overflow_message.trim()
+            ? body.overflow_message.trim()
+            : null;
+
+      const id = routeParam(req, "id");
+
+      if (body.overflow_queue_id !== undefined) {
+        const target =
+          typeof body.overflow_queue_id === "string" && body.overflow_queue_id.trim()
+            ? body.overflow_queue_id.trim()
+            : null;
+        // Evitar que una cola se desborde a sí misma.
+        data.overflow_queue = target && target !== id ? { connect: { id: target } } : { disconnect: true };
+      }
+
+      if (body.sla_policy_id !== undefined) {
+        const sla =
+          typeof body.sla_policy_id === "string" && body.sla_policy_id.trim()
+            ? body.sla_policy_id.trim()
+            : null;
+        data.sla_policy = sla ? { connect: { id: sla } } : { disconnect: true };
+      }
+
+      const syncSkills = body.skills !== undefined;
+      const skills = syncSkills ? normalizeQueueSkills(body.skills) : [];
+      const syncChannels = body.channel_ids !== undefined;
+      const channelIds = syncChannels
+        ? [...new Set((body.channel_ids ?? []).filter((cid) => typeof cid === "string" && cid.trim()))]
+        : [];
+
+      const q = await getPrisma().$transaction(async (tx) => {
+        const updated = await tx.queue.update({ where: { id }, data });
+        if (syncChannels) {
+          await tx.queueChannel.deleteMany({
+            where: { queue_id: id, channel_id: { notIn: channelIds } },
+          });
+          if (channelIds.length > 0) {
+            await tx.queueChannel.createMany({
+              data: channelIds.map((channel_id) => ({ queue_id: id, channel_id })),
+              skipDuplicates: true,
+            });
+          }
+        }
+        if (syncSkills) {
+          // Recreamos para reflejar cambios en min_level/mandatory.
+          await tx.queueSkill.deleteMany({ where: { queue_id: id } });
+          if (skills.length > 0) {
+            await tx.queueSkill.createMany({
+              data: skills.map((s) => ({ queue_id: id, ...s })),
+              skipDuplicates: true,
+            });
+          }
+        }
+        return updated;
+      });
       res.json(q);
     })
   );
@@ -1654,7 +1948,9 @@ export function buildApiRouter(app: Express): Router {
             type: c.type,
             status: c.status,
             conversations_today: map.get(c.id) ?? 0,
-            ...(c.type === "WHATSAPP" ? { whatsapp_provider: String(cfg.provider ?? "ultramsg") } : {}),
+            ...(c.type === "WHATSAPP"
+              ? { whatsapp_provider: String(cfg.provider ?? (cfg.agenthub ? "agenthub" : "ultramsg")) }
+              : {}),
           };
         })
       );
@@ -2251,6 +2547,53 @@ export function buildApiRouter(app: Express): Router {
   );
 
   r.get(
+    "/settings/tags",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (_req, res) => {
+      res.json(
+        await getPrisma().tag.findMany({
+          orderBy: { name: "asc" },
+          include: { _count: { select: { contacts: true } } },
+        })
+      );
+    })
+  );
+  r.post(
+    "/settings/tags",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const body = req.body as { name?: string; color?: string };
+      const name = body.name?.trim();
+      if (!name) throw new HttpError(400, "name required");
+      const color = body.color?.trim() || "#6B7280";
+      res.status(201).json(await getPrisma().tag.create({ data: { name, color } }));
+    })
+  );
+  r.put(
+    "/settings/tags/:id",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      const body = req.body as { name?: string; color?: string };
+      const data: Prisma.TagUpdateInput = {};
+      if (typeof body.name === "string" && body.name.trim()) data.name = body.name.trim();
+      if (typeof body.color === "string" && body.color.trim()) data.color = body.color.trim();
+      res.json(await getPrisma().tag.update({ where: { id: routeParam(req, "id") }, data }));
+    })
+  );
+  r.delete(
+    "/settings/tags/:id",
+    requireAuth,
+    requirePermission("settings"),
+    asyncHandler(async (req, res) => {
+      await getPrisma().tag.delete({ where: { id: routeParam(req, "id") } });
+      res.status(204).send();
+    })
+  );
+
+  r.get(
     "/settings/integrations-summary",
     requireAuth,
     requireAnyPermission("settings", "supervisor"),
@@ -2364,10 +2707,30 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (req, res) => {
+      const body = req.body as {
+        company_name?: string;
+        timezone?: string;
+        language?: string;
+      };
+      const data: Prisma.OrganizationSettingsUpdateInput = {};
+      if (typeof body.company_name === "string" && body.company_name.trim()) {
+        data.company_name = body.company_name.trim();
+      }
+      if (typeof body.timezone === "string" && body.timezone.trim()) {
+        data.timezone = body.timezone.trim();
+      }
+      if (typeof body.language === "string" && body.language.trim()) {
+        data.language = body.language.trim();
+      }
       const org = await getPrisma().organizationSettings.upsert({
         where: { id: "default" },
-        create: { id: "default", ...req.body },
-        update: req.body,
+        create: {
+          id: "default",
+          company_name: data.company_name as string | undefined,
+          timezone: data.timezone as string | undefined,
+          language: data.language as string | undefined,
+        },
+        update: data,
       });
       res.json(org);
     })

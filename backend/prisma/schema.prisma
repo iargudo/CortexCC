@@ -420,7 +420,7 @@ model Queue {
   rotation_order       Int?
   overflow_queue_id    String?
   overflow_message     String?
-  schedule             Json?
+  business_hours_id    String?
   out_of_hours_message String?
   sla_policy_id        String?
   is_active            Boolean          @default(true)
@@ -431,6 +431,7 @@ model Queue {
   skills_required      QueueSkill[]
   conversations        Conversation[]
   sla_policy           SlaPolicy?       @relation(fields: [sla_policy_id], references: [id])
+  business_hours       BusinessHours?   @relation(fields: [business_hours_id], references: [id], onDelete: SetNull)
   dialer_campaigns     DialerCampaign[]
   created_at           DateTime         @default(now())
   updated_at           DateTime         @updatedAt
@@ -526,11 +527,12 @@ model QuickReply {
 }
 
 model BusinessHours {
-  id       String @id @default(uuid())
-  name     String @unique
-  timezone String @default("America/Guayaquil")
+  id       String  @id @default(uuid())
+  name     String  @unique
+  timezone String  @default("America/Guayaquil")
   schedule Json
   holidays Json?
+  queues   Queue[]
 
   @@map("business_hours")
 }

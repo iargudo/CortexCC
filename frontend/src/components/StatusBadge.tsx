@@ -35,10 +35,22 @@ const convStatusConfig: Record<ConversationStatus, { label: string; variant: str
   TRANSFERRED: { label: "Transferida", variant: "bg-primary/20 text-primary" },
 };
 
-export function ConversationStatusBadge({ status }: { status: ConversationStatus }) {
+/** Verde suave para resueltas cuando un rol de supervisión necesita escanear el historial. */
+const resolvedEmphasizedVariant = "bg-status-online/20 text-status-online";
+
+export function ConversationStatusBadge({
+  status,
+  emphasizeResolved = false,
+}: {
+  status: ConversationStatus;
+  /** Si es true, RESOLVED usa verde en lugar de gris neutro. */
+  emphasizeResolved?: boolean;
+}) {
   const config = convStatusConfig[status];
+  const variant =
+    status === "RESOLVED" && emphasizeResolved ? resolvedEmphasizedVariant : config.variant;
   return (
-    <span className={cn("inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium", config.variant)}>
+    <span className={cn("inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium", variant)}>
       {config.label}
     </span>
   );

@@ -49,6 +49,9 @@ export function ResolveDialog({
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["conversations"] });
       void qc.invalidateQueries({ queryKey: ["conversation", conversationId] });
+      void qc.invalidateQueries({ queryKey: ["agents"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard", "stats"] });
+      void qc.invalidateQueries({ queryKey: ["queues"] });
       toast.success(sendCsat ? "Conversación resuelta (CSAT pendiente de canal)" : "Conversación resuelta");
       onOpenChange(false);
       setDispositionId("");

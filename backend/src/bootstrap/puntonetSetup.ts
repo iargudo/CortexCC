@@ -3,16 +3,18 @@ import { hashPassword } from "../lib/password.js";
 
 const ROTATION_GROUP = "ventas_puntonet";
 
-/** Horario de ventas (usado por la auto-respuesta de fuera de horario de la cola). */
+/**
+ * Horario de ventas en formato canónico de BusinessHours (arrays de slots por día).
+ * Se usa por la auto-respuesta de fuera de horario de las colas de ventas.
+ */
 const SALES_SCHEDULE = {
-  timezone: "America/Guayaquil",
-  mon: { open: "08:00", close: "20:00" },
-  tue: { open: "08:00", close: "20:00" },
-  wed: { open: "08:00", close: "20:00" },
-  thu: { open: "08:00", close: "20:00" },
-  fri: { open: "08:00", close: "20:00" },
-  sat: { open: "09:00", close: "14:00" },
-  sun: null,
+  monday: [{ start: "08:00", end: "20:00" }],
+  tuesday: [{ start: "08:00", end: "20:00" }],
+  wednesday: [{ start: "08:00", end: "20:00" }],
+  thursday: [{ start: "08:00", end: "20:00" }],
+  friday: [{ start: "08:00", end: "20:00" }],
+  saturday: [{ start: "09:00", end: "14:00" }],
+  sunday: [],
 } as const;
 
 export type PuntonetSetupResult = {
@@ -89,22 +91,14 @@ export async function runPuntonetSetup(
     update: { first_response_seconds: 120, resolution_seconds: 3600 },
   });
 
-  await prisma.businessHours.upsert({
+  const salesBusinessHours = await prisma.businessHours.upsert({
     where: { name: "Horario Puntonet" },
     create: {
       name: "Horario Puntonet",
       timezone: "America/Guayaquil",
-      schedule: {
-        mon: { open: "08:00", close: "20:00" },
-        tue: { open: "08:00", close: "20:00" },
-        wed: { open: "08:00", close: "20:00" },
-        thu: { open: "08:00", close: "20:00" },
-        fri: { open: "08:00", close: "20:00" },
-        sat: { open: "09:00", close: "14:00" },
-        sun: null,
-      },
+      schedule: SALES_SCHEDULE,
     },
-    update: { timezone: "America/Guayaquil" },
+    update: { timezone: "America/Guayaquil", schedule: SALES_SCHEDULE },
   });
 
   // --- 3 coordinaciones (equipos) + colas en rotación Round Robin ---
@@ -137,7 +131,7 @@ export async function runPuntonetSetup(
         // Nivel 1: rotación cíclica entre coordinaciones.
         rotation_group: ROTATION_GROUP,
         rotation_order: def.order,
-        schedule: SALES_SCHEDULE,
+        business_hours_id: salesBusinessHours.id,
         out_of_hours_message:
           "Gracias por contactar a Puntonet. Nuestro horario de ventas es lun–vie 08:00–20:00 y sáb 09:00–14:00.",
       },
@@ -149,7 +143,7 @@ export async function runPuntonetSetup(
         is_active: true,
         rotation_group: ROTATION_GROUP,
         rotation_order: def.order,
-        schedule: SALES_SCHEDULE,
+        business_hours_id: salesBusinessHours.id,
       },
     });
 

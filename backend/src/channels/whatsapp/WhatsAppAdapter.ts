@@ -9,6 +9,7 @@ import type {
   SendResult,
 } from "../ChannelAdapter.js";
 import { parseWhatsAppChannelConfig, type WhatsAppChannelConfig } from "./config.js";
+import { getAgentHubRelayConfig, sendAgentReplyToAgentHub } from "../agenthubRelay.js";
 
 type Dict = Record<string, unknown>;
 
@@ -91,6 +92,16 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private config: WhatsAppChannelConfig | null = null;
 
   async initialize(channel: Channel): Promise<void> {
+    // Modo AgentHub (handoff): el número lo gestiona AgentHub, por lo que las
+    // credenciales del proveedor son opcionales. No romper si no vienen.
+    if (getAgentHubRelayConfig(channel.config)) {
+      try {
+        this.config = parseWhatsAppChannelConfig(channel.config);
+      } catch {
+        this.config = null;
+      }
+      return;
+    }
     this.config = parseWhatsAppChannelConfig(channel.config);
   }
 
@@ -99,7 +110,35 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return this.config;
   }
 
+  private isProviderConfigured(config: unknown): boolean {
+    const provider = asRecord(config).provider;
+    return typeof provider === "string" && provider.length > 0;
+  }
+
   async sendMessage(conversation: ConversationWithChannel, message: OutboundMessage): Promise<SendResult> {
+    // Handoff mode: when the channel is bound to AgentHub, deliver the human agent's
+    // reply through AgentHub (same number/history). Channels without this config keep
+    // sending directly via their provider (unchanged behavior).
+    const relay = getAgentHubRelayConfig(conversation.channel.config);
+    if (relay) {
+      const conversationRefId = conversation.source_ref_id;
+      if (!conversationRefId) {
+        return { ok: false, error: "Conversation has no source_ref_id (AgentHub conversation id)" };
+      }
+      const phone = conversation.contact?.phone_wa ?? conversation.contact?.phone;
+      if (!phone) return { ok: false, error: "Contact phone is required for WhatsApp outbound" };
+      const userId = phone.replace(/[^\d]/g, "");
+      const body = message.content?.trim();
+      if (!body) return { ok: false, error: "Message content is required" };
+      return sendAgentReplyToAgentHub({
+        config: relay,
+        conversationRefId,
+        channelType: "whatsapp",
+        userId,
+        content: body,
+      });
+    }
+
     const cfg = this.getConfig();
     const to = pickDestinationPhone(conversation);
     const body = message.content?.trim();
@@ -118,6 +157,13 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   async healthCheck(channel: Channel): Promise<HealthStatus> {
+    // Modo AgentHub (handoff): no hay proveedor propio que verificar; las
+    // respuestas se relayan a AgentHub.
+    const relay = getAgentHubRelayConfig(channel.config);
+    if (relay && !this.isProviderConfigured(channel.config)) {
+      return { ok: true, detail: "Modo AgentHub (handoff): respuestas vía AgentHub" };
+    }
+
     let cfg: WhatsAppChannelConfig;
     try {
       cfg = parseWhatsAppChannelConfig(channel.config);

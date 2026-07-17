@@ -33,6 +33,77 @@ function fallbackTextByType(contentType: "TEXT" | "IMAGE" | "FILE" | "AUDIO" | "
   return "";
 }
 
+/**
+ * Attach an inbound message to an EXISTING conversation located by `source_ref_id`
+ * (the external system's conversation id, e.g. AgentHub). Used for handoff channels
+ * (webchat / WhatsApp via AgentHub) where the conversation was already created by an
+ * escalation and messages must be correlated by reference id, not by phone.
+ *
+ * Does NOT create the conversation: if it is not found, throws (no silent fallback).
+ * Idempotent on `external_message_id` within the conversation.
+ */
+export async function attachInboundBySourceRef(input: {
+  source_ref_id: string;
+  content: string;
+  content_type?: string;
+  external_message_id?: string;
+  contact?: { name?: string };
+}): Promise<{ conversation_id: string; message_id: string; deduped: boolean }> {
+  const sourceRef = input.source_ref_id?.trim();
+  if (!sourceRef) throw new Error("source_ref_id is required");
+
+  const conversation = await getPrisma().conversation.findFirst({
+    where: { source_ref_id: sourceRef },
+    orderBy: [{ updated_at: "desc" }, { created_at: "desc" }],
+  });
+  if (!conversation) {
+    throw new Error(`No conversation found for source_ref_id=${sourceRef}`);
+  }
+
+  const mappedType = mapIncomingContentType(input.content_type);
+  const normalizedContent = input.content?.trim() || fallbackTextByType(mappedType);
+
+  // Idempotency: skip if we already stored this external message id in this conversation.
+  if (input.external_message_id) {
+    const existing = await getPrisma().message.findFirst({
+      where: {
+        conversation_id: conversation.id,
+        metadata: { path: ["external_message_id"], equals: input.external_message_id },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      return { conversation_id: conversation.id, message_id: existing.id, deduped: true };
+    }
+  }
+
+  const msg = await getPrisma().message.create({
+    data: {
+      conversation_id: conversation.id,
+      sender_type: "CONTACT",
+      content: normalizedContent,
+      content_type: mappedType,
+      metadata: {
+        source: "agenthub_inbound",
+        external_message_id: input.external_message_id,
+      } as object,
+      is_internal: false,
+      delivery_status: "delivered",
+    },
+  });
+
+  await getPrisma().conversation.update({
+    where: { id: conversation.id },
+    data: {
+      last_message_preview: normalizedContent.slice(0, 200),
+      last_message_at: new Date(),
+      unread_agent_count: { increment: 1 },
+    },
+  });
+
+  return { conversation_id: conversation.id, message_id: msg.id, deduped: false };
+}
+
 export async function ingestIncomingMessage(
   channelId: string,
   incoming: IncomingMessage

@@ -2,6 +2,7 @@ import { type Conversation, type ChannelType } from "@/data/mock";
 import { ChannelIcon } from "@/components/ChannelIcon";
 import { PriorityIndicator, SlaBar } from "@/components/PriorityIndicator";
 import { ConversationStatusBadge } from "@/components/StatusBadge";
+import { useAuthStore } from "@/stores/authStore";
 import { cn } from "@/lib/utils";
 import { Loader2, MessageSquare, Mail, Phone, Globe, Users } from "lucide-react";
 
@@ -42,6 +43,13 @@ export function ConversationList({
   isInitialLoad = false,
   isRefetching = false,
 }: Props) {
+  const user = useAuthStore((s) => s.user);
+  // Admin / supervisor / coordinador: resueltas con tinte distinto para escanear historial.
+  const emphasizeResolved =
+    user?.role === "admin" ||
+    user?.role === "supervisor" ||
+    user?.role === "coordinator" ||
+    Boolean(user?.permissions?.supervisor);
   const tabs = (showAllTab ? (["mine", "queue", "all"] as const) : (["mine", "queue"] as const));
   const timeAgo = (dateStr: string) => {
     const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
@@ -111,14 +119,19 @@ export function ConversationList({
         ) : conversations.length === 0 ? (
           <div className="p-4 text-center text-sm text-muted-foreground">No hay conversaciones</div>
         ) : (
-          conversations.map(conv => (
+          conversations.map(conv => {
+            const isSelected = selected?.id === conv.id || highlightId === conv.id;
+            const isResolvedHighlight = emphasizeResolved && conv.status === "RESOLVED";
+            return (
             <button
               type="button"
               key={conv.id}
               onClick={() => onSelect(conv)}
               className={cn(
-                "w-full text-left p-3 border-b transition-colors hover:bg-muted/50",
-                (selected?.id === conv.id || highlightId === conv.id) && "bg-muted"
+                "w-full text-left p-3 border-b border-l-2 border-l-transparent transition-colors hover:bg-muted/50",
+                isResolvedHighlight && "border-l-status-online bg-status-online/[0.06] hover:bg-status-online/10",
+                isSelected && !isResolvedHighlight && "bg-muted",
+                isSelected && isResolvedHighlight && "bg-status-online/15 hover:bg-status-online/15"
               )}
             >
               <div className="flex items-start gap-2">
@@ -139,7 +152,10 @@ export function ConversationList({
                   {conv.subject && <p className="text-xs text-muted-foreground truncate">{conv.subject}</p>}
                   <p className="text-xs text-muted-foreground truncate mt-0.5">{conv.last_message}</p>
                   <div className="flex items-center gap-1.5 mt-1.5">
-                    <ConversationStatusBadge status={conv.status} />
+                    <ConversationStatusBadge
+                      status={conv.status}
+                      emphasizeResolved={emphasizeResolved}
+                    />
                     <span className="text-[10px] text-muted-foreground">●{conv.queue_name}</span>
                   </div>
                   {conv.sla_percent !== undefined && (
@@ -150,7 +166,8 @@ export function ConversationList({
                 </div>
               </div>
             </button>
-          ))
+            );
+          })
         )}
       </div>
     </div>

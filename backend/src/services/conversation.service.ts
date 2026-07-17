@@ -3,10 +3,11 @@ import { getPrisma } from "../lib/prisma.js";
 import { HttpError } from "../middleware/errorHandler.js";
 import { mapConversation, mapMessage, type ActiveAssigneeInfo } from "./conversationMapper.js";
 import { enqueueOutbound, enqueueRouting } from "../queue/bull.js";
-import { routeNextWaitingInQueue } from "../routing/coordinationDispatcher.js";
+import { routeNextWaitingInQueue, resolveInboundQueueId } from "../routing/coordinationDispatcher.js";
 import { scheduleInitialSlaCheck } from "./slaCheck.service.js";
 import { mapChannelType } from "../lib/channelTypes.js";
 import * as contactService from "./contact.service.js";
+import { getAgentHubRelayConfig } from "../channels/agenthubRelay.js";
 
 const messageInclude = {
   attachments: true,
@@ -512,18 +513,21 @@ export async function createConversationFromEscalation(data: {
   priority?: number;
   subject?: string;
 }) {
-  const queue =
-    (data.queueId &&
-      (await getPrisma().queue.findFirst({
+  // Con cola preferida explícita, resolverla (por id o nombre). Sin cola preferida,
+  // usar el dispatcher de rotación (round-robin entre coordinaciones) igual que el
+  // inbound directo, en vez de caer siempre en la primera cola activa.
+  const explicitQueue = data.queueId
+    ? await getPrisma().queue.findFirst({
         where: { OR: [{ id: data.queueId }, { name: data.queueId }] },
-      }))) ||
-    (await getPrisma().queue.findFirst({ where: { is_active: true } }));
+      })
+    : null;
+  const queueId = explicitQueue?.id ?? (await resolveInboundQueueId(data.channelId));
 
   const conv = await getPrisma().conversation.create({
     data: {
       channel_id: data.channelId,
       contact_id: data.contactId,
-      queue_id: queue?.id,
+      queue_id: queueId,
       status: "WAITING",
       priority: data.priority ?? 5,
       source: data.source,
@@ -534,10 +538,72 @@ export async function createConversationFromEscalation(data: {
     },
   });
   await enqueueRouting({ conversationId: conv.id });
-  if (queue?.id) {
-    await scheduleInitialSlaCheck(conv.id, queue.id);
+  if (queueId) {
+    await scheduleInitialSlaCheck(conv.id, queueId);
   }
   return conv.id;
+}
+
+/**
+ * Return control of a conversation from the human agent back to the AgentHub bot.
+ * Calls AgentHub's control endpoint (owner=bot) using the channel's AgentHub relay
+ * config. The LLM resumes handling subsequent inbound messages.
+ *
+ * Requires the channel to be bound to AgentHub (channel.config.agenthub) and the
+ * conversation to carry the AgentHub reference (source_ref_id). Throws (no fallback)
+ * when either is missing or the control call fails.
+ */
+export async function returnConversationToBot(
+  conversationId: string,
+  viewer: ConversationViewer
+): Promise<{ ok: true; conversation_id: string }> {
+  await assertAgentCanAccessConversation(conversationId, viewer);
+
+  const conversation = await getPrisma().conversation.findUnique({
+    where: { id: conversationId },
+    include: { channel: true },
+  });
+  if (!conversation) throw new HttpError(404, "Not found");
+
+  const relay = getAgentHubRelayConfig(conversation.channel.config);
+  if (!relay) {
+    throw new HttpError(
+      400,
+      "El canal no está integrado con AgentHub (channel.config.agenthub ausente)"
+    );
+  }
+  const refId = conversation.source_ref_id;
+  if (!refId) {
+    throw new HttpError(400, "La conversación no tiene source_ref_id de AgentHub");
+  }
+
+  const prefix = relay.apiPrefix.startsWith("/") ? relay.apiPrefix : `/${relay.apiPrefix}`;
+  const url = `${relay.baseUrl.replace(/\/+$/, "")}${prefix}/conversations/${encodeURIComponent(refId)}/control`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": relay.apiKey },
+      body: JSON.stringify({ owner: "bot" }),
+    });
+  } catch (err) {
+    throw new HttpError(
+      502,
+      `No se pudo contactar a AgentHub: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = await res.text();
+    } catch {
+      /* ignore */
+    }
+    throw new HttpError(502, `AgentHub rechazó devolver a bot (${res.status})${detail ? `: ${detail.slice(0, 300)}` : ""}`);
+  }
+
+  return { ok: true, conversation_id: conversationId };
 }
 
 export async function getEscalationContext(id: string, viewer: ConversationViewer) {

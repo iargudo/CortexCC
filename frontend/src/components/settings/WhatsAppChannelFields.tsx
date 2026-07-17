@@ -6,6 +6,7 @@ import { buildWhatsAppWebhookUrl } from "@/lib/webhookUrls";
 import {
   WHATSAPP_PROVIDER_OPTIONS,
   type WhatsAppForm,
+  type WhatsAppMode,
   type WhatsAppProvider,
 } from "@/lib/whatsappChannelConfig";
 import { Copy } from "lucide-react";
@@ -44,6 +45,59 @@ export function WhatsAppChannelFields({ form, onChange, channelId }: Props) {
   return (
     <div className="space-y-3">
       <div>
+        <Label className="text-xs">Modo de conexión</Label>
+        <Select value={form.mode} onValueChange={(v) => setPatch({ mode: v as WhatsAppMode })}>
+          <SelectTrigger className="h-8 text-sm mt-1">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="direct">Directo (proveedor)</SelectItem>
+            <SelectItem value="agenthub">Vía AgentHub (handoff)</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground mt-1.5">
+          {form.mode === "agenthub"
+            ? "El número lo gestiona AgentHub (el bot responde allí). CortexCC solo recibe y responde al escalar a un humano; no se guardan credenciales del proveedor."
+            : "CortexCC es dueño del número y habla directo con el proveedor de WhatsApp."}
+        </p>
+      </div>
+
+      {form.mode === "agenthub" && (
+        <div className="space-y-3 rounded-md border bg-muted/40 p-3">
+          <Label className="text-xs font-semibold">Integración AgentHub</Label>
+          <div>
+            <Label className="text-xs">Base URL</Label>
+            <Input
+              placeholder="https://agenthub.midominio.com"
+              value={form.agentHubBaseUrl}
+              onChange={(e) => setPatch({ agentHubBaseUrl: e.target.value })}
+              className="h-8 text-sm"
+            />
+          </div>
+          <div>
+            <Label className="text-xs">API Prefix (opcional)</Label>
+            <Input
+              placeholder="/api/v1"
+              value={form.agentHubApiPrefix}
+              onChange={(e) => setPatch({ agentHubApiPrefix: e.target.value })}
+              className="h-8 text-sm font-mono"
+            />
+          </div>
+          <div>
+            <Label className="text-xs">API Key (AgentHub)</Label>
+            <Input
+              placeholder="Clave de AgentHub (VALID_API_KEYS)"
+              type="password"
+              value={form.agentHubApiKey}
+              onChange={(e) => setPatch({ agentHubApiKey: e.target.value })}
+              className="h-8 text-sm"
+            />
+          </div>
+        </div>
+      )}
+
+      {form.mode === "direct" && (
+      <div>
         <Label className="text-xs">Proveedor WhatsApp</Label>
         <Select value={form.provider} onValueChange={(v) => setPatch({ provider: v as WhatsAppProvider })}>
           <SelectTrigger className="h-8 text-sm mt-1">
@@ -61,8 +115,9 @@ export function WhatsAppChannelFields({ form, onChange, channelId }: Props) {
           <p className="text-[11px] text-muted-foreground mt-1.5">{selectedProvider.description}</p>
         )}
       </div>
+      )}
 
-      {form.provider === "ultramsg" && (
+      {form.mode === "direct" && form.provider === "ultramsg" && (
         <>
           <div>
             <Label className="text-xs">Instance ID</Label>
@@ -95,7 +150,7 @@ export function WhatsAppChannelFields({ form, onChange, channelId }: Props) {
         </>
       )}
 
-      {form.provider === "twilio" && (
+      {form.mode === "direct" && form.provider === "twilio" && (
         <>
           <div>
             <Label className="text-xs">Account SID</Label>
@@ -140,7 +195,7 @@ export function WhatsAppChannelFields({ form, onChange, channelId }: Props) {
         </>
       )}
 
-      {form.provider === "360dialog" && (
+      {form.mode === "direct" && form.provider === "360dialog" && (
         <>
           <div>
             <Label className="text-xs">API Key (D360-API-KEY)</Label>
@@ -173,7 +228,7 @@ export function WhatsAppChannelFields({ form, onChange, channelId }: Props) {
         </>
       )}
 
-      {webhookUrl && (
+      {form.mode === "direct" && webhookUrl && (
         <div className="rounded-md border bg-muted/40 p-3 space-y-2">
           <Label className="text-xs">URL de webhook (mensajes entrantes)</Label>
           <div className="flex items-center gap-2">

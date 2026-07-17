@@ -2,7 +2,7 @@ import type { Server } from "socket.io";
 import { getPrisma } from "../lib/prisma.js";
 import { getCurrentTenantKey } from "../lib/tenantContext.js";
 import { queueRoom, supervisorRoom } from "../lib/socketRooms.js";
-import { isWithinSchedule } from "../lib/queueSchedule.js";
+import { isWithinBusinessHours } from "../lib/queueSchedule.js";
 import { enqueueOverflowCheck, enqueueRouting } from "../queue/bull.js";
 import { sendAutomaticMessage } from "./autoMessage.service.js";
 
@@ -18,15 +18,20 @@ export async function onConversationEnqueued(conversationId: string, queueId: st
   const queue = await getPrisma().queue.findUnique({
     where: { id: queueId },
     select: {
-      schedule: true,
       out_of_hours_message: true,
       overflow_queue_id: true,
       max_wait_seconds: true,
+      business_hours: { select: { schedule: true, timezone: true, holidays: true } },
     },
   });
   if (!queue) return;
 
-  if (queue.out_of_hours_message && !isWithinSchedule(queue.schedule)) {
+  const bh = queue.business_hours;
+  if (
+    queue.out_of_hours_message &&
+    bh &&
+    !isWithinBusinessHours(bh.schedule, bh.timezone, bh.holidays)
+  ) {
     await sendAutomaticMessage(conversationId, queue.out_of_hours_message);
   }
 
