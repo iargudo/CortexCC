@@ -1,8 +1,18 @@
 import { getPrisma } from "../lib/prisma.js";
+import {
+  conversationTeamFilter,
+  isTeamScoped,
+  queueTeamFilter,
+  qualityEvaluationTeamFilter,
+  userTeamFilter,
+} from "../lib/teamScopeFilters.js";
 
-export async function volumeReport(dateFrom: Date, dateTo: Date) {
+export async function volumeReport(dateFrom: Date, dateTo: Date, teamIds?: string[] | null) {
   const rows = await getPrisma().conversation.findMany({
-    where: { created_at: { gte: dateFrom, lte: dateTo } },
+    where: {
+      created_at: { gte: dateFrom, lte: dateTo },
+      ...conversationTeamFilter(teamIds),
+    },
     include: { channel: true },
   });
   const byDay: Record<string, Record<string, number>> = {};
@@ -21,26 +31,27 @@ function startOfWeekUtc(d: Date): Date {
   return x;
 }
 
-export async function summaryKpis(dateFrom: Date, dateTo: Date) {
+export async function summaryKpis(dateFrom: Date, dateTo: Date, teamIds?: string[] | null) {
   const range = { gte: dateFrom, lte: dateTo };
+  const team = conversationTeamFilter(teamIds);
   const [total, resolved, abandoned, ahtAgg, convCsatAgg, resolvedSlaOk, resolvedSlaBad] =
     await Promise.all([
-      getPrisma().conversation.count({ where: { created_at: range } }),
-      getPrisma().conversation.count({ where: { created_at: range, status: "RESOLVED" } }),
-      getPrisma().conversation.count({ where: { created_at: range, status: "ABANDONED" } }),
+      getPrisma().conversation.count({ where: { created_at: range, ...team } }),
+      getPrisma().conversation.count({ where: { created_at: range, status: "RESOLVED", ...team } }),
+      getPrisma().conversation.count({ where: { created_at: range, status: "ABANDONED", ...team } }),
       getPrisma().conversation.aggregate({
-        where: { created_at: range, handle_time_seconds: { not: null } },
+        where: { created_at: range, handle_time_seconds: { not: null }, ...team },
         _avg: { handle_time_seconds: true },
       }),
       getPrisma().conversation.aggregate({
-        where: { created_at: range, csat_score: { not: null } },
+        where: { created_at: range, csat_score: { not: null }, ...team },
         _avg: { csat_score: true },
       }),
       getPrisma().conversation.count({
-        where: { created_at: range, status: "RESOLVED", sla_breached: false },
+        where: { created_at: range, status: "RESOLVED", sla_breached: false, ...team },
       }),
       getPrisma().conversation.count({
-        where: { created_at: range, status: "RESOLVED", sla_breached: true },
+        where: { created_at: range, status: "RESOLVED", sla_breached: true, ...team },
       }),
     ]);
   const slaResolved = resolvedSlaOk + resolvedSlaBad;
@@ -55,9 +66,12 @@ export async function summaryKpis(dateFrom: Date, dateTo: Date) {
   };
 }
 
-export async function hourlyVolumeReport(dateFrom: Date, dateTo: Date) {
+export async function hourlyVolumeReport(dateFrom: Date, dateTo: Date, teamIds?: string[] | null) {
   const rows = await getPrisma().conversation.findMany({
-    where: { created_at: { gte: dateFrom, lte: dateTo } },
+    where: {
+      created_at: { gte: dateFrom, lte: dateTo },
+      ...conversationTeamFilter(teamIds),
+    },
     select: { created_at: true },
   });
   const counts = new Array(24).fill(0) as number[];
@@ -73,15 +87,19 @@ export async function hourlyVolumeReport(dateFrom: Date, dateTo: Date) {
   };
 }
 
-export async function csatTrendReport(dateFrom: Date, dateTo: Date) {
+export async function csatTrendReport(dateFrom: Date, dateTo: Date, teamIds?: string[] | null) {
   const range = { gte: dateFrom, lte: dateTo };
   const [evals, convRatings] = await Promise.all([
     getPrisma().qualityEvaluation.findMany({
-      where: { created_at: range },
+      where: { created_at: range, ...qualityEvaluationTeamFilter(teamIds) },
       select: { score: true, created_at: true },
     }),
     getPrisma().conversation.findMany({
-      where: { updated_at: range, csat_score: { not: null } },
+      where: {
+        updated_at: range,
+        csat_score: { not: null },
+        ...conversationTeamFilter(teamIds),
+      },
       select: { csat_score: true, updated_at: true },
     }),
   ]);
@@ -112,12 +130,18 @@ export async function csatTrendReport(dateFrom: Date, dateTo: Date) {
   return { byWeek };
 }
 
-export async function productivityReport(dateFrom: Date, dateTo: Date) {
+export async function productivityReport(dateFrom: Date, dateTo: Date, teamIds?: string[] | null) {
   const range = { gte: dateFrom, lte: dateTo };
   const users = await getPrisma().user.findMany({
+    where: userTeamFilter(teamIds),
     include: {
       assignments: {
-        where: { assigned_at: range },
+        where: {
+          assigned_at: range,
+          ...(isTeamScoped(teamIds)
+            ? { conversation: { queue: { team_id: { in: teamIds } } } }
+            : {}),
+        },
         include: {
           conversation: {
             select: {
@@ -174,21 +198,33 @@ export async function productivityReport(dateFrom: Date, dateTo: Date) {
   });
 }
 
-export async function slaReport(dateFrom: Date, dateTo: Date) {
+export async function slaReport(dateFrom: Date, dateTo: Date, teamIds?: string[] | null) {
   const range = { gte: dateFrom, lte: dateTo };
-  const queues = await getPrisma().queue.findMany({ select: { id: true, name: true, max_wait_seconds: true } });
+  const queues = await getPrisma().queue.findMany({
+    where: queueTeamFilter(teamIds),
+    select: { id: true, name: true, max_wait_seconds: true },
+  });
+  const queueIds = queues.map((q) => q.id);
+  if (queueIds.length === 0) {
+    return [];
+  }
+
   const rows = await getPrisma().conversation.groupBy({
     by: ["queue_id", "sla_breached"],
     where: {
       created_at: range,
-      queue_id: { not: null },
+      queue_id: { in: queueIds },
       status: { in: ["RESOLVED", "WRAP_UP"] },
     },
     _count: true,
   });
   const waitAgg = await getPrisma().conversation.groupBy({
     by: ["queue_id"],
-    where: { created_at: range, queue_id: { not: null }, wait_time_seconds: { not: null } },
+    where: {
+      created_at: range,
+      queue_id: { in: queueIds },
+      wait_time_seconds: { not: null },
+    },
     _avg: { wait_time_seconds: true },
   });
   const waitMap = new Map(waitAgg.map((w) => [w.queue_id!, Math.round(w._avg.wait_time_seconds ?? 0)]));
@@ -216,23 +252,20 @@ export async function slaReport(dateFrom: Date, dateTo: Date) {
 }
 
 /**
- * Conversion funnel: from created leads to handled and won (conversion),
- * broken down by disposition and category. Conversions are counted using the
- * generic `Disposition.is_conversion` flag (not a hardcoded category).
- * `teamIds` optionally scopes the funnel (e.g. a coordinator's teams).
+ * Conversion funnel: from created leads to handled and won (conversion).
+ * `teamIds`: null = global; array (incluso vacío) = alcance de coordinador.
  */
 export async function funnelReport(dateFrom: Date, dateTo: Date, teamIds?: string[] | null) {
   const range = { gte: dateFrom, lte: dateTo };
-  const teamFilter =
-    teamIds && teamIds.length > 0 ? { queue: { team_id: { in: teamIds } } } : {};
+  const team = conversationTeamFilter(teamIds);
 
   const totalLeads = await getPrisma().conversation.count({
-    where: { created_at: range, ...teamFilter },
+    where: { created_at: range, ...team },
   });
 
   const grouped = await getPrisma().conversation.groupBy({
     by: ["disposition_id"],
-    where: { resolved_at: range, disposition_id: { not: null }, ...teamFilter },
+    where: { resolved_at: range, disposition_id: { not: null }, ...team },
     _count: true,
   });
 
@@ -305,7 +338,7 @@ export async function exportReportCsv(
     return { filename: "embudo-conversion.csv", body: lines.join("\n") };
   }
   if (t === "productivity") {
-    const rows = await productivityReport(dateFrom, dateTo);
+    const rows = await productivityReport(dateFrom, dateTo, teamIds);
     const lines = [["agent", "conversations", "aht_seconds", "csat", "fcr", "status"].join(",")];
     for (const r of rows) {
       lines.push(
@@ -315,7 +348,7 @@ export async function exportReportCsv(
     return { filename: "productividad.csv", body: lines.join("\n") };
   }
   if (t === "sla") {
-    const rows = await slaReport(dateFrom, dateTo);
+    const rows = await slaReport(dateFrom, dateTo, teamIds);
     const lines = [["queue", "handled", "sla_percent", "avg_wait_seconds"].join(",")];
     for (const r of rows) {
       lines.push([r.queue, r.handled, r.sla_percent, r.avg_wait].map(csvCell).join(","));
@@ -323,7 +356,7 @@ export async function exportReportCsv(
     return { filename: "sla-por-cola.csv", body: lines.join("\n") };
   }
   if (t === "summary") {
-    const s = await summaryKpis(dateFrom, dateTo);
+    const s = await summaryKpis(dateFrom, dateTo, teamIds);
     const lines = [
       ["metric", "value"].join(","),
       ["total_conversations", s.total_conversations].map(csvCell).join(","),
@@ -336,7 +369,7 @@ export async function exportReportCsv(
     return { filename: "resumen-kpis.csv", body: lines.join("\n") };
   }
   if (t === "hourly") {
-    const h = await hourlyVolumeReport(dateFrom, dateTo);
+    const h = await hourlyVolumeReport(dateFrom, dateTo, teamIds);
     const lines = [["hour", "conversations"].join(",")];
     for (const row of h.byHour) {
       lines.push([row.hour, row.conversations].map(csvCell).join(","));
@@ -344,14 +377,14 @@ export async function exportReportCsv(
     return { filename: "volumen-horario.csv", body: lines.join("\n") };
   }
   if (t === "csat") {
-    const c = await csatTrendReport(dateFrom, dateTo);
+    const c = await csatTrendReport(dateFrom, dateTo, teamIds);
     const lines = [["week_start", "label", "avg_score", "samples"].join(",")];
     for (const row of c.byWeek) {
       lines.push([row.week, row.label, row.avg_score, row.samples].map(csvCell).join(","));
     }
     return { filename: "csat-semanal.csv", body: lines.join("\n") };
   }
-  const vol = await volumeReport(dateFrom, dateTo);
+  const vol = await volumeReport(dateFrom, dateTo, teamIds);
   const lines = [["day", "channel", "conversations"].join(",")];
   for (const [day, chMap] of Object.entries(vol.byDay)) {
     for (const [channel, count] of Object.entries(chMap)) {

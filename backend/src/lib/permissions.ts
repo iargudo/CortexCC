@@ -55,3 +55,16 @@ export const defaultRolePermissions: Record<string, PermissionsMap> = {
     settings: false,
   },
 };
+
+/**
+ * Combina defaults del rol canónico con lo persistido en BD.
+ * Las claves explícitas en BD ganan; las nuevas se rellenan sin exigir migración.
+ */
+export function resolveRolePermissions(roleName: string, stored: unknown): PermissionsMap {
+  const defaults = defaultRolePermissions[roleName] ?? {};
+  const current =
+    stored && typeof stored === "object" && !Array.isArray(stored)
+      ? (stored as PermissionsMap)
+      : {};
+  return { ...defaults, ...current };
+}

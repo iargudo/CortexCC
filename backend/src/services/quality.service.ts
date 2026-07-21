@@ -1,13 +1,18 @@
 import { getPrisma } from "../lib/prisma.js";
 import { HttpError } from "../middleware/errorHandler.js";
+import {
+  conversationTeamFilter,
+  isTeamScoped,
+  qualityEvaluationTeamFilter,
+} from "../lib/teamScopeFilters.js";
 
 function weightedScore(c: { saludo: number; empatia: number; resolucion: number; cierre: number }) {
   return c.saludo * 0.25 + c.empatia * 0.25 + c.resolucion * 0.3 + c.cierre * 0.2;
 }
 
-export async function listPending() {
+export async function listPending(teamIds?: string[] | null) {
   return getPrisma().conversation.findMany({
-    where: { status: "RESOLVED" },
+    where: { status: "RESOLVED", ...conversationTeamFilter(teamIds) },
     orderBy: { resolved_at: "desc" },
     take: 50,
     include: {
@@ -19,8 +24,12 @@ export async function listPending() {
   });
 }
 
-export async function listEvaluations() {
-  return getPrisma().qualityEvaluation.findMany({ orderBy: { created_at: "desc" }, take: 100 });
+export async function listEvaluations(teamIds?: string[] | null) {
+  return getPrisma().qualityEvaluation.findMany({
+    where: qualityEvaluationTeamFilter(teamIds),
+    orderBy: { created_at: "desc" },
+    take: 100,
+  });
 }
 
 export async function createEvaluation(input: {
@@ -28,12 +37,25 @@ export async function createEvaluation(input: {
   categories: { saludo: number; empatia: number; resolucion: number; cierre: number };
   comment: string;
   evaluatorId?: string;
+  teamIds?: string[] | null;
 }) {
-  const conv = await getPrisma().conversation.findUnique({
-    where: { id: input.conversation_id },
+  const conv = await getPrisma().conversation.findFirst({
+    where: {
+      id: input.conversation_id,
+      ...conversationTeamFilter(input.teamIds),
+    },
     include: { contact: true, channel: true, assignments: { include: { user: true } } },
   });
-  if (!conv) throw new HttpError(404, "Conversation not found");
+  if (!conv) {
+    if (isTeamScoped(input.teamIds)) {
+      const exists = await getPrisma().conversation.findUnique({
+        where: { id: input.conversation_id },
+        select: { id: true },
+      });
+      if (exists) throw new HttpError(403, "Conversación fuera del alcance de tu coordinación");
+    }
+    throw new HttpError(404, "Conversation not found");
+  }
   const agent = conv.assignments[0]?.user;
   const score = weightedScore(input.categories) * 10;
   return getPrisma().qualityEvaluation.create({

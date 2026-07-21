@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { hasPermission, type PermissionKey } from "../lib/permissions.js";
+import { hasPermission, resolveRolePermissions, type PermissionKey } from "../lib/permissions.js";
 import { HttpError } from "./errorHandler.js";
 
 function userHasRoleName(req: Request, roleName: string): boolean {
@@ -9,11 +9,9 @@ function userHasRoleName(req: Request, roleName: string): boolean {
 function mergedPermissions(req: Request): Record<string, boolean> {
   const merged: Record<string, boolean> = {};
   for (const r of req.authUser?.roles ?? []) {
-    const p = r.permissions as Record<string, boolean> | null;
-    if (p && typeof p === "object") {
-      for (const [k, v] of Object.entries(p)) {
-        if (v) merged[k] = true;
-      }
+    const resolved = resolveRolePermissions(r.name, r.permissions);
+    for (const [k, v] of Object.entries(resolved)) {
+      if (v) merged[k] = true;
     }
   }
   return merged;

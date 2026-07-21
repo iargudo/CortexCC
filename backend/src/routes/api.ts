@@ -41,7 +41,9 @@ import {
 import { RoutingEngine } from "../routing/RoutingEngine.js";
 import { routeWaitingForUser } from "../routing/coordinationDispatcher.js";
 import { getSupervisionScope, scopeTeamIds } from "../lib/supervisionScope.js";
-import { defaultRolePermissions } from "../lib/permissions.js";
+import { defaultRolePermissions, resolveRolePermissions } from "../lib/permissions.js";
+import { assertUserCanTransferConversations, getAgentCanTransferSetting } from "../lib/transferPolicy.js";
+import { voiceCallTeamFilter } from "../lib/teamScopeFilters.js";
 import { enqueueRouting } from "../queue/bull.js";
 import { createAdapterForType } from "../channels/registry.js";
 import { getWhatsAppConfigValidationError } from "../channels/whatsapp/config.js";
@@ -101,10 +103,6 @@ async function notifyUserOfConversationAssignment(
       tenantKey,
     });
   }
-}
-
-function isSupervisor(user: Express.Request["authUser"]): boolean {
-  return Boolean(user?.roles?.some((r) => r.name === "supervisor" || r.name === "admin"));
 }
 
 function conversationViewer(req: Express.Request) {
@@ -654,8 +652,12 @@ export function buildApiRouter(app: Express): Router {
     "/voice/recordings/:voiceCallId",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const voiceCall = await getPrisma().voiceCall.findUnique({
-        where: { id: routeParam(req, "voiceCallId") },
+      const teamIds = reportTeamScope(req);
+      const voiceCall = await getPrisma().voiceCall.findFirst({
+        where: {
+          id: routeParam(req, "voiceCallId"),
+          ...voiceCallTeamFilter(teamIds),
+        },
       });
       if (!voiceCall) throw new HttpError(404, "Voice call not found");
 
@@ -687,8 +689,8 @@ export function buildApiRouter(app: Express): Router {
   r.get(
     "/dashboard/stats",
     requireAuth,
-    asyncHandler(async (_req, res) => {
-      res.json(await dashboardService.getDashboardStats());
+    asyncHandler(async (req, res) => {
+      res.json(await dashboardService.getDashboardStats(reportTeamScope(req)));
     })
   );
 
@@ -699,7 +701,7 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const from = new Date(String(req.query.date_from ?? Date.now()));
       const to = new Date(String(req.query.date_to ?? Date.now()));
-      res.json(await reportService.volumeReport(from, to));
+      res.json(await reportService.volumeReport(from, to, reportTeamScope(req)));
     })
   );
 
@@ -710,7 +712,7 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const from = new Date(String(req.query.date_from ?? Date.now()));
       const to = new Date(String(req.query.date_to ?? Date.now()));
-      res.json(await reportService.productivityReport(from, to));
+      res.json(await reportService.productivityReport(from, to, reportTeamScope(req)));
     })
   );
 
@@ -721,7 +723,7 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const from = new Date(String(req.query.date_from ?? Date.now()));
       const to = new Date(String(req.query.date_to ?? Date.now()));
-      res.json(await reportService.slaReport(from, to));
+      res.json(await reportService.slaReport(from, to, reportTeamScope(req)));
     })
   );
 
@@ -732,7 +734,7 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const from = new Date(String(req.query.date_from ?? Date.now()));
       const to = new Date(String(req.query.date_to ?? Date.now()));
-      res.json(await reportService.summaryKpis(from, to));
+      res.json(await reportService.summaryKpis(from, to, reportTeamScope(req)));
     })
   );
 
@@ -743,7 +745,7 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const from = new Date(String(req.query.date_from ?? Date.now()));
       const to = new Date(String(req.query.date_to ?? Date.now()));
-      res.json(await reportService.hourlyVolumeReport(from, to));
+      res.json(await reportService.hourlyVolumeReport(from, to, reportTeamScope(req)));
     })
   );
 
@@ -754,7 +756,7 @@ export function buildApiRouter(app: Express): Router {
     asyncHandler(async (req, res) => {
       const from = new Date(String(req.query.date_from ?? Date.now()));
       const to = new Date(String(req.query.date_to ?? Date.now()));
-      res.json(await reportService.csatTrendReport(from, to));
+      res.json(await reportService.csatTrendReport(from, to, reportTeamScope(req)));
     })
   );
 
@@ -788,8 +790,8 @@ export function buildApiRouter(app: Express): Router {
     "/quality/pending",
     requireAuth,
     requirePermission("quality"),
-    asyncHandler(async (_req, res) => {
-      res.json(await qualityService.listPending());
+    asyncHandler(async (req, res) => {
+      res.json(await qualityService.listPending(reportTeamScope(req)));
     })
   );
 
@@ -797,8 +799,8 @@ export function buildApiRouter(app: Express): Router {
     "/quality/evaluations",
     requireAuth,
     requirePermission("quality"),
-    asyncHandler(async (_req, res) => {
-      res.json(await qualityService.listEvaluations());
+    asyncHandler(async (req, res) => {
+      res.json(await qualityService.listEvaluations(reportTeamScope(req)));
     })
   );
 
@@ -815,6 +817,7 @@ export function buildApiRouter(app: Express): Router {
       const row = await qualityService.createEvaluation({
         ...body,
         evaluatorId: req.authUser!.id,
+        teamIds: reportTeamScope(req),
       });
       res.status(201).json(row);
     })
@@ -834,25 +837,33 @@ export function buildApiRouter(app: Express): Router {
       const dateFrom = req.query.dateFrom as string | undefined;
       const dateTo = req.query.dateTo as string | undefined;
       const search = req.query.search as string | undefined;
+      const teamIds = reportTeamScope(req);
 
-      const where: Record<string, unknown> = {
-        NOT: { metadata: { equals: Prisma.DbNull } },
-        metadata: { path: ["recording_url"], not: Prisma.JsonNull },
-      };
-      if (direction === "inbound" || direction === "outbound") where.direction = direction;
-      if (agentId) where.user_id = agentId;
+      const and: Record<string, unknown>[] = [
+        { NOT: { metadata: { equals: Prisma.DbNull } } },
+        { metadata: { path: ["recording_url"], not: Prisma.JsonNull } },
+      ];
+      const teamFilter = voiceCallTeamFilter(teamIds);
+      if (Object.keys(teamFilter).length > 0) and.push(teamFilter);
+
+      if (direction === "inbound" || direction === "outbound") and.push({ direction });
+      if (agentId) and.push({ user_id: agentId });
       if (dateFrom || dateTo) {
         const range: Record<string, Date> = {};
         if (dateFrom) range.gte = new Date(dateFrom);
         if (dateTo) range.lte = new Date(dateTo + "T23:59:59.999Z");
-        where.started_at = range;
+        and.push({ started_at: range });
       }
       if (search?.trim()) {
-        where.OR = [
-          { remote_uri: { contains: search.trim() } },
-          { remote_display_name: { contains: search.trim(), mode: "insensitive" } },
-        ];
+        and.push({
+          OR: [
+            { remote_uri: { contains: search.trim() } },
+            { remote_display_name: { contains: search.trim(), mode: "insensitive" } },
+          ],
+        });
       }
+
+      const where = { AND: and };
 
       const [items, total] = await Promise.all([
         getPrisma().voiceCall.findMany({
@@ -907,12 +918,14 @@ export function buildApiRouter(app: Express): Router {
         res.json({ conversations: [], contacts: [] });
         return;
       }
+      const scope = getSupervisionScope(req.authUser);
       res.json(
         await conversationService.inboxGlobalSearch({
           userId: req.authUser!.id,
           q,
           limit,
-          isSupervisor: isSupervisor(req.authUser!),
+          isSupervisor: scope.isSupervisor,
+          teamIds: scopeTeamIds(scope),
         })
       );
     })
@@ -1046,6 +1059,7 @@ export function buildApiRouter(app: Express): Router {
     "/conversations/:id/transfer",
     requireAuth,
     asyncHandler(async (req, res) => {
+      await assertUserCanTransferConversations(req.authUser);
       const id = routeParam(req, "id");
       const body = req.body as {
         target_type?: string;
@@ -1403,9 +1417,14 @@ export function buildApiRouter(app: Express): Router {
   r.get(
     "/agents/online",
     requireAuth,
-    asyncHandler(async (_req, res) => {
+    asyncHandler(async (req, res) => {
+      const scope = getSupervisionScope(req.authUser);
+      const teamFilter =
+        scope.isSupervisor && !scope.global
+          ? { teams: { some: { team_id: { in: scope.teamIds } } } }
+          : undefined;
       const users = await getPrisma().user.findMany({
-        where: { status: { in: ["ONLINE", "BUSY"] } },
+        where: { status: { in: ["ONLINE", "BUSY"] }, ...teamFilter },
         include: { skills: { include: { skill: true } }, assignments: { where: { ended_at: null } } },
       });
       res.json(
@@ -1426,8 +1445,13 @@ export function buildApiRouter(app: Express): Router {
     "/agents/:id",
     requireAuth,
     asyncHandler(async (req, res) => {
-      const u = await getPrisma().user.findUnique({
-        where: { id: routeParam(req, "id") },
+      const scope = getSupervisionScope(req.authUser);
+      const teamFilter =
+        scope.isSupervisor && !scope.global
+          ? { teams: { some: { team_id: { in: scope.teamIds } } } }
+          : undefined;
+      const u = await getPrisma().user.findFirst({
+        where: { id: routeParam(req, "id"), ...teamFilter },
         include: { skills: { include: { skill: true } }, assignments: { where: { ended_at: null } } },
       });
       if (!u) throw new HttpError(404, "Not found");
@@ -1862,6 +1886,7 @@ export function buildApiRouter(app: Express): Router {
     "/routing/assign",
     requireAuth,
     asyncHandler(async (req, res) => {
+      await assertUserCanTransferConversations(req.authUser);
       const body = req.body as {
         conversation_id?: string;
         strategy?: string;
@@ -2358,7 +2383,13 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("settings"),
     asyncHandler(async (_req, res) => {
-      res.json(await getPrisma().role.findMany());
+      const roles = await getPrisma().role.findMany();
+      res.json(
+        roles.map((role) => ({
+          ...role,
+          permissions: resolveRolePermissions(role.name, role.permissions),
+        }))
+      );
     })
   );
   r.post(
@@ -2702,6 +2733,16 @@ export function buildApiRouter(app: Express): Router {
       res.json(org);
     })
   );
+
+  /** Flags de organización legibles por cualquier usuario autenticado (p. ej. bandeja). */
+  r.get(
+    "/settings/capabilities",
+    requireAuth,
+    asyncHandler(async (_req, res) => {
+      res.json({ agent_can_transfer: await getAgentCanTransferSetting() });
+    })
+  );
+
   r.put(
     "/settings/general",
     requireAuth,
@@ -2711,6 +2752,7 @@ export function buildApiRouter(app: Express): Router {
         company_name?: string;
         timezone?: string;
         language?: string;
+        agent_can_transfer?: boolean;
       };
       const data: Prisma.OrganizationSettingsUpdateInput = {};
       if (typeof body.company_name === "string" && body.company_name.trim()) {
@@ -2722,13 +2764,17 @@ export function buildApiRouter(app: Express): Router {
       if (typeof body.language === "string" && body.language.trim()) {
         data.language = body.language.trim();
       }
+      if (typeof body.agent_can_transfer === "boolean") {
+        data.agent_can_transfer = body.agent_can_transfer;
+      }
       const org = await getPrisma().organizationSettings.upsert({
         where: { id: "default" },
         create: {
           id: "default",
-          company_name: data.company_name as string | undefined,
-          timezone: data.timezone as string | undefined,
-          language: data.language as string | undefined,
+          company_name: (data.company_name as string | undefined) ?? "Cortex Contact",
+          timezone: (data.timezone as string | undefined) ?? "America/Guayaquil",
+          language: (data.language as string | undefined) ?? "es",
+          agent_can_transfer: Boolean(data.agent_can_transfer ?? false),
         },
         update: data,
       });

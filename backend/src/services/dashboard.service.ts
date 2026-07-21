@@ -1,4 +1,5 @@
 import { getPrisma } from "../lib/prisma.js";
+import { conversationTeamFilter, userTeamFilter } from "../lib/teamScopeFilters.js";
 
 function startOfToday() {
   const d = new Date();
@@ -7,16 +8,15 @@ function startOfToday() {
 }
 
 /**
- * Live board stats. When `teamIds` is provided (coordinator scope), agents and
+ * Live board stats. When `teamIds` is an array (coordinator scope), agents and
  * conversations are limited to those teams; `null`/undefined = global (jefatura).
  */
 export async function getDashboardStats(teamIds?: string[] | null) {
   const today = startOfToday();
   const since24h = new Date(Date.now() - 24 * 3600 * 1000);
 
-  const scoped = Array.isArray(teamIds);
-  const userWhere = scoped ? { teams: { some: { team_id: { in: teamIds } } } } : {};
-  const convScope = scoped ? { queue: { team_id: { in: teamIds } } } : {};
+  const userWhere = userTeamFilter(teamIds);
+  const convScope = conversationTeamFilter(teamIds);
 
   const [
     agents_total,

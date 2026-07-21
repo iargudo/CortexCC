@@ -42,6 +42,7 @@ type OrganizationSettings = {
   company_name: string | null;
   timezone: string | null;
   language: string | null;
+  agent_can_transfer?: boolean;
 };
 
 type TagRow = {
@@ -243,12 +244,14 @@ export default function SettingsGeneralPage() {
   const [orgName, setOrgName] = useState("");
   const [orgTz, setOrgTz] = useState("America/Guayaquil");
   const [orgLang, setOrgLang] = useState("es");
+  const [agentCanTransfer, setAgentCanTransfer] = useState(false);
   const [orgHydrated, setOrgHydrated] = useState(false);
 
   if (!orgHydrated && orgQuery.data) {
     setOrgName(orgQuery.data.company_name ?? "");
     setOrgTz(orgQuery.data.timezone ?? "America/Guayaquil");
     setOrgLang(orgQuery.data.language ?? "es");
+    setAgentCanTransfer(Boolean(orgQuery.data.agent_can_transfer));
     setOrgHydrated(true);
   }
 
@@ -260,10 +263,12 @@ export default function SettingsGeneralPage() {
           company_name: orgName.trim(),
           timezone: orgTz,
           language: orgLang,
+          agent_can_transfer: agentCanTransfer,
         }),
       }),
     onSuccess: () => {
       invalidate(["settings", "general"]);
+      invalidate(["org-capabilities"]);
       toast.success("Organización actualizada");
     },
     onError: (e: Error) => toast.error(e.message),
@@ -383,6 +388,24 @@ export default function SettingsGeneralPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="rounded-md border p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <Checkbox
+                    id="agent-can-transfer"
+                    checked={agentCanTransfer}
+                    onCheckedChange={(c) => setAgentCanTransfer(Boolean(c))}
+                  />
+                  <div className="space-y-1">
+                    <Label htmlFor="agent-can-transfer" className="text-xs font-medium cursor-pointer">
+                      Permitir que agentes transfieran conversaciones
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      Por defecto solo admin, supervisor y coordinador pueden transferir. Activa esta
+                      opción para habilitar la transferencia también a agentes.
+                    </p>
+                  </div>
+                </div>
               </div>
               <div className="flex justify-end">
                 <Button

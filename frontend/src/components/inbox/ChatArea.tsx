@@ -163,6 +163,17 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
   const isAssigned = conversation.status === "ASSIGNED";
   const isPrivileged =
     me?.role === "admin" || me?.role === "supervisor";
+  const capsQuery = useQuery({
+    queryKey: ["org-capabilities"],
+    queryFn: () => apiJson<{ agent_can_transfer: boolean }>("/settings/capabilities"),
+    staleTime: 30_000,
+  });
+  const canTransfer =
+    me?.role === "admin" ||
+    me?.role === "supervisor" ||
+    me?.role === "coordinator" ||
+    Boolean(me?.permissions?.supervisor) ||
+    Boolean(capsQuery.data?.agent_can_transfer);
   /** Misma regla que el API: mensajes al contacto solo en ACTIVE / ON_HOLD / WRAP_UP (salvo admin/supervisor). */
   const canSendOutbound =
     isPrivileged ||
@@ -182,11 +193,14 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
     (terminalStatus ||
       conversation.status === "WAITING" ||
       conversation.status === "ASSIGNED");
-  const cannotTransferAsAgent =
-    !isPrivileged &&
-    (terminalStatus ||
-      conversation.status === "WAITING" ||
-      (conversation.status === "ASSIGNED" && !acceptActionsForMe));
+  const cannotTransfer =
+    !canTransfer ||
+    (!isPrivileged &&
+      me?.role !== "coordinator" &&
+      !me?.permissions?.supervisor &&
+      (terminalStatus ||
+        conversation.status === "WAITING" ||
+        (conversation.status === "ASSIGNED" && !acceptActionsForMe)));
 
   // Initialize email fields from conversation
   useEffect(() => {
@@ -365,9 +379,9 @@ export function ChatArea({ conversation }: { conversation: Conversation }) {
             variant="ghost"
             size="icon"
             className="h-8 w-8"
-            disabled={cannotTransferAsAgent}
+            disabled={cannotTransfer}
             onClick={() => setTransferOpen(true)}
-            title="Transferir"
+            title={canTransfer ? "Transferir" : "Sin permiso para transferir"}
             aria-label="Transferir"
           >
             <ArrowRightLeft size={14} />

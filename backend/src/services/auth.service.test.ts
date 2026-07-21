@@ -25,8 +25,12 @@ describe("toAuthUserResponse", () => {
     expect(out.name).toBe("Admin User");
     expect(out.permissions).toEqual({
       inbox: true,
-      settings: true,
+      dashboard: true,
       supervisor: true,
+      quality: true,
+      reports: true,
+      contacts: true,
+      settings: true,
     });
   });
 
@@ -47,7 +51,14 @@ describe("toAuthUserResponse", () => {
 
     expect(out.role).toBe("supervisor");
     expect(out.avatar).toBe("https://cdn/avatar.png");
-    expect(out.permissions).toEqual({ inbox: true, supervisor: true, reports: true });
+    expect(out.permissions).toEqual({
+      inbox: true,
+      dashboard: true,
+      contacts: true,
+      supervisor: true,
+      quality: true,
+      reports: true,
+    });
   });
 
   it("defaults to agent role when no elevated role is present", () => {
@@ -63,6 +74,10 @@ describe("toAuthUserResponse", () => {
     });
 
     expect(out.role).toBe("agent");
-    expect(out.permissions).toEqual({ inbox: true });
+    expect(out.permissions).toEqual({
+      inbox: true,
+      dashboard: true,
+      contacts: true,
+    });
   });
 });

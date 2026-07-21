@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { defaultRolePermissions, hasPermission } from "./permissions.js";
+import {
+  defaultRolePermissions,
+  hasPermission,
+  resolveRolePermissions,
+} from "./permissions.js";
 
 describe("hasPermission", () => {
   it("returns true when module allowed", () => {
@@ -36,5 +40,21 @@ describe("defaultRolePermissions", () => {
     expect(defaultRolePermissions.admin.inbox).toBe(true);
     expect(defaultRolePermissions.supervisor.inbox).toBe(true);
     expect(defaultRolePermissions.agent.inbox).toBe(true);
+  });
+});
+
+describe("resolveRolePermissions", () => {
+  it("fills missing keys from role defaults", () => {
+    expect(resolveRolePermissions("coordinator", { inbox: true }).supervisor).toBe(true);
+    expect(resolveRolePermissions("agent", { inbox: true }).supervisor).toBe(false);
+  });
+
+  it("lets stored overrides win over defaults", () => {
+    expect(resolveRolePermissions("agent", { supervisor: true }).supervisor).toBe(true);
+    expect(resolveRolePermissions("coordinator", { supervisor: false }).supervisor).toBe(false);
+  });
+
+  it("returns only stored map for unknown roles", () => {
+    expect(resolveRolePermissions("custom", { settings: true })).toEqual({ settings: true });
   });
 });

@@ -716,16 +716,23 @@ export async function inboxGlobalSearch(params: {
   q: string;
   limit: number;
   isSupervisor: boolean;
+  /** null = global; array = coordinador acotado a esos equipos. */
+  teamIds?: string[] | null;
 }) {
   const term = params.q.trim();
   if (term.length < 2) return { conversations: [], contacts: [] };
 
+  const scoped = params.isSupervisor && params.teamIds != null;
+  const teamScope: Prisma.ConversationWhereInput = scoped
+    ? { queue: { team_id: { in: params.teamIds } } }
+    : {};
+
   const visibility: Prisma.ConversationWhereInput = params.isSupervisor
-    ? {}
+    ? teamScope
     : {
         OR: [
           { assignments: { some: { user_id: params.userId, ended_at: null } } },
-          { status: "WAITING" },
+          { status: "WAITING", ...teamScope },
         ],
       };
 
@@ -739,9 +746,10 @@ export async function inboxGlobalSearch(params: {
     ],
   };
 
-  const where: Prisma.ConversationWhereInput = params.isSupervisor
-    ? textSearch
-    : { AND: [visibility, textSearch] };
+  const where: Prisma.ConversationWhereInput =
+    params.isSupervisor && !scoped
+      ? textSearch
+      : { AND: [visibility, textSearch] };
 
   const rows = await getPrisma().conversation.findMany({
     where,

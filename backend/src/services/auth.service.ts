@@ -9,7 +9,7 @@ import {
   signRefreshToken,
   verifyAccessToken,
 } from "../lib/jwt.js";
-import type { PermissionsMap } from "../lib/permissions.js";
+import { resolveRolePermissions, type PermissionsMap } from "../lib/permissions.js";
 import { HttpError } from "../middleware/errorHandler.js";
 
 function primaryRole(roles: { name: string }[]): "admin" | "supervisor" | "coordinator" | "agent" {
@@ -19,12 +19,11 @@ function primaryRole(roles: { name: string }[]): "admin" | "supervisor" | "coord
   return "agent";
 }
 
-function mergeRolePermissions(roles: { role: { permissions: unknown } }[]): PermissionsMap {
+function mergeRolePermissions(roles: { role: { name: string; permissions: unknown } }[]): PermissionsMap {
   const merged: PermissionsMap = {};
   for (const userRole of roles) {
-    const permissions = userRole.role.permissions;
-    if (!permissions || typeof permissions !== "object") continue;
-    for (const [key, value] of Object.entries(permissions as Record<string, unknown>)) {
+    const permissions = resolveRolePermissions(userRole.role.name, userRole.role.permissions);
+    for (const [key, value] of Object.entries(permissions)) {
       if (value === true) {
         merged[key as keyof PermissionsMap] = true;
       }

@@ -587,6 +587,8 @@ model OrganizationSettings {
   sip_extension_range_start Int      @default(7001)
   sip_extension_range_end   Int      @default(7099)
   default_country_code      String   @default("EC")
+  /** Si true, los agentes pueden transferir conversaciones. Admin/supervisor/coordinador siempre pueden. */
+  agent_can_transfer        Boolean  @default(false)
   updated_at                DateTime @updatedAt
 
   @@map("organization_settings")

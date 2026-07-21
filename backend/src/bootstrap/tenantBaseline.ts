@@ -36,10 +36,21 @@ export async function applyTenantBaseline(
   });
 
   for (const roleName of BASELINE_ROLES) {
-    await prisma.role.upsert({
+    const defaults = defaultRolePermissions[roleName] ?? {};
+    const existing = await prisma.role.findUnique({ where: { name: roleName } });
+    if (!existing) {
+      await prisma.role.create({ data: { name: roleName, permissions: defaults } });
+      continue;
+    }
+    // Defaults primero; lo persistido gana (preserva customizaciones de Roles).
+    // Así claves nuevas (p. ej. transfer) se rellenan sin pisar overrides.
+    const current =
+      existing.permissions && typeof existing.permissions === "object" && !Array.isArray(existing.permissions)
+        ? (existing.permissions as Record<string, boolean>)
+        : {};
+    await prisma.role.update({
       where: { name: roleName },
-      create: { name: roleName, permissions: defaultRolePermissions[roleName] ?? {} },
-      update: { permissions: defaultRolePermissions[roleName] ?? {} },
+      data: { permissions: { ...defaults, ...current } },
     });
   }
 
