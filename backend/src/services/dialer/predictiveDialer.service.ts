@@ -14,7 +14,11 @@ export async function runPredictiveDialerTick(io: Server | null, campaignId: str
   if (!campaign || campaign.status !== "ACTIVE" || campaign.mode !== "PREDICTIVE") return;
 
   const idleAgents = await getPrisma().dialerSession.count({
-    where: { campaign_id: campaignId, status: "IDLE" },
+    where: {
+      campaign_id: campaignId,
+      status: "IDLE",
+      agent: { status: "ONLINE", sip_extension: { not: null } },
+    },
   });
   const activeDialing = await getPrisma().dialerCampaignContact.count({
     where: { campaign_id: campaignId, status: "DIALING" },
@@ -98,9 +102,13 @@ export async function assignPredictiveAnswerToAgent(
   dialerContactId: string
 ): Promise<void> {
   const session = await getPrisma().dialerSession.findFirst({
-    where: { campaign_id: campaignId, status: "IDLE" },
+    where: {
+      campaign_id: campaignId,
+      status: "IDLE",
+      agent: { status: "ONLINE", sip_extension: { not: null } },
+    },
     orderBy: { updated_at: "asc" },
-    include: { agent: { select: { id: true, sip_extension: true } } },
+    include: { agent: { select: { id: true, sip_extension: true, status: true } } },
   });
   if (!session?.agent.sip_extension) return;
 

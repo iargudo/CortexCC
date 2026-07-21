@@ -130,14 +130,40 @@ export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<
   const res = await apiFetch(path, init);
   if (!res.ok) {
     let msg = res.statusText;
+    let details: unknown;
     try {
-      const j = (await res.json()) as { error?: string };
+      const j = (await res.json()) as { error?: string; details?: unknown };
       if (j.error) msg = j.error;
+      details = j.details;
     } catch {
       /* ignore */
     }
-    throw new Error(msg);
+    throw new ApiError(msg, res.status, details);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
+}
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public details?: unknown
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+
+  get code(): string | undefined {
+    if (this.details && typeof this.details === "object" && "code" in this.details) {
+      const c = (this.details as { code?: unknown }).code;
+      return typeof c === "string" ? c : undefined;
+    }
+    return undefined;
+  }
+}
+
+export function isAgentEligibilityError(err: unknown): err is ApiError {
+  if (!(err instanceof ApiError) || err.status !== 409) return false;
+  return err.code === "AGENT_STATUS_BLOCKED" || err.code === "AGENT_AT_CAPACITY";
 }

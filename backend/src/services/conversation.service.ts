@@ -8,6 +8,7 @@ import { scheduleInitialSlaCheck } from "./slaCheck.service.js";
 import { mapChannelType } from "../lib/channelTypes.js";
 import * as contactService from "./contact.service.js";
 import { getAgentHubRelayConfig } from "../channels/agenthubRelay.js";
+import { assertAgentAssignable } from "../lib/agentEligibility.js";
 
 const messageInclude = {
   attachments: true,
@@ -306,6 +307,7 @@ export async function transferConversation(
     target_id?: string;
     queue_id?: string;
     reason?: string;
+    force?: boolean;
   },
   fromUserId: string | undefined,
   isSupervisor: boolean,
@@ -371,6 +373,7 @@ export async function transferConversation(
   }
 
   if (body.target_id && (body.target_type === "agent" || body.target_type === "supervisor")) {
+    await assertAgentAssignable(body.target_id, { force: body.force });
     await getPrisma().$transaction(async (tx) => {
       await tx.conversationAssignment.updateMany({
         where: { conversation_id: conversationId, ended_at: null },

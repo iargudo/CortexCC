@@ -43,6 +43,7 @@ import { routeWaitingForUser } from "../routing/coordinationDispatcher.js";
 import { getSupervisionScope, scopeTeamIds } from "../lib/supervisionScope.js";
 import { defaultRolePermissions, resolveRolePermissions } from "../lib/permissions.js";
 import { assertUserCanTransferConversations, getAgentCanTransferSetting } from "../lib/transferPolicy.js";
+import { getAgentAssignmentLoad } from "../lib/agentEligibility.js";
 import { voiceCallTeamFilter } from "../lib/teamScopeFilters.js";
 import { enqueueRouting } from "../queue/bull.js";
 import { createAdapterForType } from "../channels/registry.js";
@@ -1066,6 +1067,7 @@ export function buildApiRouter(app: Express): Router {
         target_id?: string;
         queue_id?: string;
         reason?: string;
+        force?: boolean;
       };
       const transferScope = getSupervisionScope(req.authUser);
       const conv = await conversationService.transferConversation(
@@ -1894,6 +1896,7 @@ export function buildApiRouter(app: Express): Router {
         target_id?: string;
         queue_id?: string;
         reason?: string;
+        force?: boolean;
       };
       if (!body.conversation_id) throw new HttpError(400, "conversation_id required");
       if (body.target_type === "auto" || !body.target_type) {
@@ -1909,6 +1912,7 @@ export function buildApiRouter(app: Express): Router {
           target_id: body.target_id,
           queue_id: body.queue_id,
           reason: body.reason,
+          force: body.force,
         },
         req.authUser!.id,
         assignScope.isSupervisor,
@@ -2883,16 +2887,36 @@ export function buildApiRouter(app: Express): Router {
     requireAuth,
     requirePermission("supervisor"),
     asyncHandler(async (req, res) => {
-      const { conversation_id, agent_id } = req.body as { conversation_id?: string; agent_id?: string };
+      const { conversation_id, agent_id, reason } = req.body as {
+        conversation_id?: string;
+        agent_id?: string;
+        reason?: string;
+      };
       if (!conversation_id || !agent_id) throw new HttpError(400, "invalid body");
       const forceScope = getSupervisionScope(req.authUser);
+      const load = await getAgentAssignmentLoad(agent_id);
       await conversationService.transferConversation(
         conversation_id,
-        { target_type: "agent", target_id: agent_id },
+        { target_type: "agent", target_id: agent_id, reason, force: true },
         req.authUser!.id,
         forceScope.isSupervisor,
         scopeTeamIds(forceScope)
       );
+      await getPrisma().auditLog.create({
+        data: {
+          actor_id: req.authUser!.id,
+          action: "force_assign",
+          entity: "conversation",
+          entity_id: conversation_id,
+          metadata: {
+            agent_id,
+            agent_status: load.status,
+            active_count: load.active_count,
+            max_concurrent: load.max_concurrent,
+            reason: reason ?? null,
+          },
+        },
+      });
       const label =
         `${req.authUser!.first_name} ${req.authUser!.last_name}`.trim() || req.authUser!.email;
       await notifyUserOfConversationAssignment(app, {

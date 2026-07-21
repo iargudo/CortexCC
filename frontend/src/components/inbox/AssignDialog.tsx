@@ -4,6 +4,16 @@ import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,11 +23,11 @@ import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import type { Agent, RoutingStrategy } from "@/data/mock";
 import { AgentStatusBadge } from "@/components/StatusBadge";
-import { apiJson } from "@/lib/api";
+import { apiJson, isAgentEligibilityError } from "@/lib/api";
 import {
   UserPlus, Bot, ShieldCheck, User, Zap, ArrowRightLeft,
   BarChart3, Clock, CheckCircle, AlertTriangle, Sparkles,
-  TrendingUp, Activity, Layers,
+  TrendingUp, Activity, Layers, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +44,8 @@ type ApiAgent = {
   status_since: string;
   csat_avg?: number;
 };
+
+type EnrichedAgent = ApiAgent & { loadPercent: number; isFull: boolean; isEligible: boolean };
 
 type ApiQueue = {
   id: string;
@@ -90,6 +102,12 @@ export function AssignDialog({
   const [considerSkills, setConsiderSkills] = useState(true);
   const [considerLoad, setConsiderLoad] = useState(true);
   const [respectSchedule, setRespectSchedule] = useState(true);
+  const [showUnavailable, setShowUnavailable] = useState(false);
+  const [forceConfirmOpen, setForceConfirmOpen] = useState(false);
+  const [forceConfirmMessage, setForceConfirmMessage] = useState("");
+  const [pendingForce, setPendingForce] = useState(false);
+
+  const allowUnavailablePick = mode === "transfer" || supervisorAgentAssign;
 
   const agentsQuery = useQuery({
     queryKey: ["agents", "assign-dialog"],
@@ -112,19 +130,37 @@ export function AssignDialog({
   const agents = agentsQuery.data ?? [];
   const aiAgents = aiAgentsQuery.data?.agents ?? [];
 
-  const availableAgents = useMemo(() => {
-    return agents
-      .filter((a) => a.status === "ONLINE" || a.status === "BUSY")
-      .map((a) => ({
-        ...a,
-        loadPercent: Math.round((a.active_conversations / Math.max(a.max_concurrent, 1)) * 100),
-        isFull: a.active_conversations >= a.max_concurrent,
-      }))
-      .sort((a, b) => a.loadPercent - b.loadPercent);
-  }, [agents]);
+  const enrichAgent = (a: ApiAgent): EnrichedAgent => {
+    const isFull = a.active_conversations >= a.max_concurrent;
+    const statusOk = a.status === "ONLINE" || a.status === "BUSY";
+    return {
+      ...a,
+      loadPercent: Math.round((a.active_conversations / Math.max(a.max_concurrent, 1)) * 100),
+      isFull,
+      isEligible: statusOk && !isFull,
+    };
+  };
+
+  const enrichedAgents = useMemo(() => agents.map(enrichAgent), [agents]);
+
+  const availableAgents = useMemo(
+    () =>
+      enrichedAgents
+        .filter((a) => a.isEligible)
+        .sort((a, b) => a.loadPercent - b.loadPercent),
+    [enrichedAgents]
+  );
+
+  const unavailableAgents = useMemo(
+    () =>
+      enrichedAgents
+        .filter((a) => !a.isEligible)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [enrichedAgents]
+  );
 
   const clientRecommendedAgent = useMemo(() => {
-    const free = availableAgents.filter((a) => !a.isFull);
+    const free = availableAgents;
     if (free.length === 0) return null;
 
     switch (routingStrategy) {
@@ -157,23 +193,20 @@ export function AssignDialog({
     retry: false,
   });
 
-  const enrichAgent = (a: ApiAgent) => ({
-    ...a,
-    loadPercent: Math.round((a.active_conversations / Math.max(a.max_concurrent, 1)) * 100),
-    isFull: a.active_conversations >= a.max_concurrent,
-  });
-
   const recommendedAgent = (() => {
     if (target !== "auto" || !conversationId) return clientRecommendedAgent;
     if (recommendQuery.isPending) return clientRecommendedAgent;
     if (recommendQuery.isError) return clientRecommendedAgent;
     const id = recommendQuery.data?.agent_id;
     if (id) {
-      const a = agents.find((x) => x.id === id);
-      return a ? enrichAgent(a) : clientRecommendedAgent;
+      const a = enrichedAgents.find((x) => x.id === id);
+      return a ?? clientRecommendedAgent;
     }
     return null;
   })();
+
+  const selectedAgentRow = enrichedAgents.find((a) => a.id === selectedAgent);
+  const selectedSupervisorRow = enrichedAgents.find((a) => a.id === selectedSupervisor);
 
   const resetForm = () => {
     setReason("");
@@ -181,11 +214,32 @@ export function AssignDialog({
     setSelectedSupervisor("");
     setSelectedAI("");
     setSelectedQueue("");
+    setPendingForce(false);
+    setForceConfirmOpen(false);
+    setForceConfirmMessage("");
+  };
+
+  const forceReasonForAgent = (agent: EnrichedAgent | undefined): string => {
+    if (!agent) return "El destino no está disponible. ¿Asignar de todas formas?";
+    if (agent.status !== "ONLINE" && agent.status !== "BUSY") {
+      return `El agente está en estado ${agent.status}. ¿Asignar de todas formas?`;
+    }
+    if (agent.isFull) {
+      return `El agente está a capacidad (${agent.active_conversations}/${agent.max_concurrent}). ¿Asignar de todas formas?`;
+    }
+    return "El agente no está disponible. ¿Asignar de todas formas?";
+  };
+
+  const needsForceForCurrentSelection = (): boolean => {
+    if (target === "agent") return Boolean(selectedAgentRow && !selectedAgentRow.isEligible);
+    if (target === "supervisor") return Boolean(selectedSupervisorRow && !selectedSupervisorRow.isEligible);
+    return false;
   };
 
   const assignMut = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { force?: boolean }) => {
       if (!conversationId) throw new Error("Falta el identificador de la conversación");
+      const force = Boolean(opts?.force);
 
       if (target === "auto") {
         await apiJson("/routing/assign", {
@@ -210,6 +264,7 @@ export function AssignDialog({
             body: JSON.stringify({
               conversation_id: conversationId,
               agent_id: selectedAgent,
+              reason: reason || undefined,
             }),
           });
         } else {
@@ -220,6 +275,7 @@ export function AssignDialog({
               target_type: "agent",
               target_id: selectedAgent,
               reason: reason || undefined,
+              force: force || undefined,
             }),
           });
         }
@@ -234,6 +290,7 @@ export function AssignDialog({
             target_type: "supervisor",
             target_id: selectedSupervisor,
             reason: reason || undefined,
+            force: force || undefined,
           }),
         });
       }
@@ -247,7 +304,16 @@ export function AssignDialog({
       onOpenChange(false);
       resetForm();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => {
+      if (isAgentEligibilityError(e) && !pendingForce) {
+        const agent =
+          target === "supervisor" ? selectedSupervisorRow : selectedAgentRow;
+        setForceConfirmMessage(e.message || forceReasonForAgent(agent));
+        setForceConfirmOpen(true);
+        return;
+      }
+      toast.error(e.message);
+    },
   });
 
   const handleAssign = () => {
@@ -264,7 +330,30 @@ export function AssignDialog({
       resetForm();
       return;
     }
-    assignMut.mutate();
+    if (supervisorAgentAssign && target === "agent" && needsForceForCurrentSelection()) {
+      setForceConfirmMessage(forceReasonForAgent(selectedAgentRow));
+      setForceConfirmOpen(true);
+      return;
+    }
+    if (!supervisorAgentAssign && needsForceForCurrentSelection()) {
+      setForceConfirmMessage(forceReasonForAgent(
+        target === "supervisor" ? selectedSupervisorRow : selectedAgentRow
+      ));
+      setForceConfirmOpen(true);
+      return;
+    }
+    assignMut.mutate({ force: false });
+  };
+
+  const confirmForceAssign = () => {
+    setPendingForce(true);
+    setForceConfirmOpen(false);
+    assignMut.mutate(
+      { force: true },
+      {
+        onSettled: () => setPendingForce(false),
+      }
+    );
   };
 
   const isValid = () => {
@@ -293,6 +382,7 @@ export function AssignDialog({
   ];
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
@@ -459,11 +549,9 @@ export function AssignDialog({
                     key={agent.id}
                     type="button"
                     onClick={() => setSelectedAgent(agent.id)}
-                    disabled={agent.isFull}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left",
-                      selectedAgent === agent.id ? "border-primary bg-primary/5" : "border-transparent hover:bg-muted/50",
-                      agent.isFull && "opacity-50 cursor-not-allowed"
+                      selectedAgent === agent.id ? "border-primary bg-primary/5" : "border-transparent hover:bg-muted/50"
                     )}
                   >
                     <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-xs font-bold shrink-0">
@@ -500,12 +588,58 @@ export function AssignDialog({
                       </div>
                       <p className="text-[10px] text-muted-foreground mt-0.5">
                         {agent.active_conversations}/{agent.max_concurrent}
-                        {agent.isFull && " (lleno)"}
                       </p>
                     </div>
                   </button>
                 ))}
+                {availableAgents.length === 0 && (
+                  <p className="text-xs text-muted-foreground px-1">No hay agentes disponibles ahora.</p>
+                )}
               </div>
+              {allowUnavailablePick && unavailableAgents.length > 0 && (
+                <div className="border rounded-lg">
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/40"
+                    onClick={() => setShowUnavailable((v) => !v)}
+                  >
+                    {showUnavailable ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    No disponibles ({unavailableAgents.length})
+                  </button>
+                  {showUnavailable && (
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto scrollbar-thin px-2 pb-2">
+                      {unavailableAgents.map((agent) => (
+                        <button
+                          key={agent.id}
+                          type="button"
+                          onClick={() => setSelectedAgent(agent.id)}
+                          className={cn(
+                            "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left",
+                            selectedAgent === agent.id
+                              ? "border-amber-500/60 bg-amber-500/5"
+                              : "border-transparent hover:bg-muted/50"
+                          )}
+                        >
+                          <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-xs font-bold shrink-0">
+                            {agent.name.split(" ").map((n) => n[0]).join("")}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium truncate">{agent.name}</p>
+                              <AgentStatusBadge status={agent.status} />
+                            </div>
+                            <p className="text-[10px] text-amber-600 mt-0.5">
+                              {agent.isFull
+                                ? `Sin cupo (${agent.active_conversations}/${agent.max_concurrent})`
+                                : `Estado ${agent.status}`}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -665,5 +799,27 @@ export function AssignDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog open={forceConfirmOpen} onOpenChange={setForceConfirmOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Asignar de todas formas</AlertDialogTitle>
+          <AlertDialogDescription>{forceConfirmMessage}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={assignMut.isPending}>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              confirmForceAssign();
+            }}
+            disabled={assignMut.isPending}
+          >
+            Confirmar
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
